@@ -27,6 +27,7 @@ const (
 type tray struct {
 	items   []*systray.MenuItem
 	ignores []*systray.MenuItem
+	remotes []*systray.MenuItem
 	add     *systray.MenuItem
 	watcher *fsnotify.Watcher
 	refresh *time.Timer
@@ -59,17 +60,23 @@ func (t *tray) ready() {
 	}
 	systray.AddSeparator()
 	ignore := systray.AddMenuItem("Ignore", "Stop listing a repository")
+	remote := systray.AddMenuItem("Check remote", "Query the remote for commits to pull with git ls-remote")
 	for i, item := range t.items {
-		sub := ignore.AddSubMenuItem("", "")
-		sub.Hide()
-		t.ignores = append(t.ignores, sub)
+		ign := ignore.AddSubMenuItem("", "")
+		ign.Hide()
+		t.ignores = append(t.ignores, ign)
+		rem := remote.AddSubMenuItemCheckbox("", "", false)
+		rem.Hide()
+		t.remotes = append(t.remotes, rem)
 		go func() {
 			for {
 				select {
 				case <-item.ClickedCh:
 					t.click(i)
-				case <-sub.ClickedCh:
+				case <-ign.ClickedCh:
 					t.ignore(i)
+				case <-rem.ClickedCh:
+					t.toggleRemote(i)
 				}
 			}
 		}()
@@ -160,25 +167,27 @@ func (t *tray) scan() {
 	t.repos = repos
 	t.mu.Unlock()
 	for _, path := range cfg.CheckRemote {
-		if _, ok := repos[path]; !ok {
-			continue
-		}
-		r := Repo{Path: path}
-		ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
-		err := r.LsRemote(ctx)
-		cancel()
-		if err != nil {
-			slog.Warn(err.Error())
-			continue
-		}
-		t.mu.Lock()
-		if known, ok := t.repos[path]; ok {
-			known.RemoteHeads = r.RemoteHeads
-			t.dirty[path] = true
-		}
-		t.mu.Unlock()
+		t.lsRemote(path)
 	}
 	t.refreshDirty()
+}
+
+// lsRemote stores the remote heads of a known repo and marks it dirty.
+func (t *tray) lsRemote(path string) {
+	r := Repo{Path: path}
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	err := r.LsRemote(ctx)
+	cancel()
+	if err != nil {
+		slog.Warn(err.Error())
+		return
+	}
+	t.mu.Lock()
+	if known, ok := t.repos[path]; ok {
+		known.RemoteHeads = r.RemoteHeads
+		t.dirty[path] = true
+	}
+	t.mu.Unlock()
 }
 
 func (t *tray) refreshDirty() {
@@ -236,6 +245,7 @@ func (t *tray) render() {
 		if i >= len(t.shown) {
 			item.Hide()
 			t.ignores[i].Hide()
+			t.remotes[i].Hide()
 			continue
 		}
 		r := t.shown[i]
@@ -268,6 +278,13 @@ func (t *tray) render() {
 		item.Show()
 		t.ignores[i].SetTitle(name)
 		t.ignores[i].Show()
+		t.remotes[i].SetTitle(name)
+		if slices.Contains(t.cfg.CheckRemote, r.Path) {
+			t.remotes[i].Check()
+		} else {
+			t.remotes[i].Uncheck()
+		}
+		t.remotes[i].Show()
 	}
 }
 
@@ -341,6 +358,34 @@ func (t *tray) ignore(i int) {
 	}
 	delete(t.repos, path)
 	t.render()
+}
+
+func (t *tray) toggleRemote(i int) {
+	t.mu.Lock()
+	if i >= len(t.shown) {
+		t.mu.Unlock()
+		return
+	}
+	path := t.shown[i].Path
+	on, err := toggleCheckRemote(path)
+	if err == nil {
+		err = t.reload()
+	}
+	if err == nil && !on {
+		if known, ok := t.repos[path]; ok {
+			known.RemoteHeads = nil
+		}
+		t.dirty[path] = true
+	}
+	t.mu.Unlock()
+	if err != nil {
+		slog.Error(err.Error())
+		return
+	}
+	if on {
+		t.lsRemote(path)
+	}
+	t.refreshDirty()
 }
 
 func (t *tray) addRepo() {

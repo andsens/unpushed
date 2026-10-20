@@ -128,6 +128,22 @@ func addRepo(repo string) error {
 	})
 }
 
+// toggleCheckRemote adds repo to checkRemote or removes it, and reports
+// whether it is in the list afterwards.
+func toggleCheckRemote(repo string) (on bool, err error) {
+	err = editConfig(func(raw map[string]any) error {
+		list := strs(raw["checkRemote"])
+		n := len(list)
+		list = slices.DeleteFunc(list, func(p string) bool { return expand(p) == repo })
+		if on = len(list) == n; on {
+			list = append(list, tilde(repo))
+		}
+		raw["checkRemote"] = list
+		return nil
+	})
+	return on, err
+}
+
 func writeConfig(raw map[string]any) error {
 	path, err := configPath()
 	if err != nil {

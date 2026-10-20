@@ -51,3 +51,22 @@ func TestIgnoreAndAdd(t *testing.T) {
 		t.Fatal("Ignored the last repo in repos")
 	}
 }
+
+func TestToggleCheckRemote(t *testing.T) {
+	root, a, _ := setup(t)
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("HOME", root)
+	for _, want := range []bool{true, false} {
+		on, err := toggleCheckRemote(a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := loadConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if on != want || slices.Contains(cfg.CheckRemote, a) != want {
+			t.Fatalf("Toggle returned %t with checkRemote %v, want %t", on, cfg.CheckRemote, want)
+		}
+	}
+}

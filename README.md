@@ -20,7 +20,7 @@ when any is behind, else green. It covers every repository found, not only the
 listed ones.
 
 "Ignore" lists the shown repositories, picking one adds it to `ignore` (or
-removes it from `repos`). With `repos` set, "Add repository…" picks a
+removes it from `repos`). "Check remote" toggles them in `checkRemote`. With `repos` set, "Add repository…" picks a
 directory to add through the desktop portal's file chooser.
 
 Repositories are found by a `find` at idle CPU and IO priority every 5
