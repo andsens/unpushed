@@ -13,31 +13,32 @@ import (
 	"sync"
 	"time"
 
-	"fyne.io/systray"
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/driver/desktop"
 	"github.com/fsnotify/fsnotify"
-	"github.com/rymdport/portal/filechooser"
 )
 
 const (
-	scanInterval = 5 * time.Minute
 	refreshDelay = 500 * time.Millisecond
 	gitTimeout   = 2 * time.Minute
 )
 
 type tray struct {
-	items   []*systray.MenuItem
-	ignores []*systray.MenuItem
-	remotes []*systray.MenuItem
-	add     *systray.MenuItem
-	watcher *fsnotify.Watcher
-	refresh *time.Timer
-	work    sync.Mutex // serializes git runs
-	mu      sync.Mutex // guards the fields below
-	cfg     Config
-	repos   map[string]*Repo
-	shown   []Repo
-	failed  map[string]bool
-	dirty   map[string]bool // repos changed since their last refresh
+	app      fyne.App
+	desk     desktop.App
+	settings fyne.Window
+	watcher  *fsnotify.Watcher
+	refresh  *time.Timer
+	reconfig chan struct{} // the config changed, rescan
+	work     sync.Mutex    // serializes git runs
+	mu       sync.Mutex    // guards the fields below
+	cfg      Config
+	found    []string // what the last scan found, ignored repos included
+	repos    map[string]*Repo
+	shown    []Repo
+	failed   map[string]bool
+	dirty    map[string]bool // repos changed since their last refresh
 }
 
 func main() {
@@ -46,124 +47,105 @@ func main() {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}
-	t := &tray{cfg: cfg, repos: map[string]*Repo{}, failed: map[string]bool{}, dirty: map[string]bool{}}
-	systray.Run(t.ready, nil)
-}
-
-func (t *tray) ready() {
-	systray.SetIcon(icons[Synced])
-	systray.SetTooltip("unpushed")
-	for range t.cfg.Max {
-		item := systray.AddMenuItem("", "")
-		item.Hide()
-		t.items = append(t.items, item)
-	}
-	systray.AddSeparator()
-	ignore := systray.AddMenuItem("Ignore", "Stop listing a repository")
-	remote := systray.AddMenuItem("Check remote", "Query the remote for commits to pull with git ls-remote")
-	for i, item := range t.items {
-		ign := ignore.AddSubMenuItem("", "")
-		ign.Hide()
-		t.ignores = append(t.ignores, ign)
-		rem := remote.AddSubMenuItemCheckbox("", "", false)
-		rem.Hide()
-		t.remotes = append(t.remotes, rem)
-		go func() {
-			for {
-				select {
-				case <-item.ClickedCh:
-					t.click(i)
-				case <-ign.ClickedCh:
-					t.ignore(i)
-				case <-rem.ClickedCh:
-					t.toggleRemote(i)
-				}
-			}
-		}()
-	}
-	t.add = systray.AddMenuItem("Add repository…", "Add a repository to repos")
-	if len(t.cfg.Repos) == 0 {
-		t.add.Hide()
-	}
-	go func() {
-		for range t.add.ClickedCh {
-			t.addRepo()
-		}
-	}()
-	systray.AddSeparator()
-	// Exits cleanly, so the service's Restart=on-failure leaves it stopped
-	quit := systray.AddMenuItem("Quit", "")
-	go func() {
-		<-quit.ClickedCh
-		systray.Quit()
-	}()
-
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		slog.Error(fmt.Sprintf("Unable to watch repositories: %s", err))
-		systray.Quit()
-		return
+		os.Exit(1)
 	}
-	t.watcher = w
+	a := app.NewWithID("io.github.andsens.unpushed")
+	desk, ok := a.(desktop.App)
+	if !ok {
+		slog.Error("No system tray on this platform")
+		os.Exit(1)
+	}
+	t := &tray{
+		app: a, desk: desk, watcher: w, reconfig: make(chan struct{}, 1), cfg: cfg,
+		repos: map[string]*Repo{}, failed: map[string]bool{}, dirty: map[string]bool{},
+	}
+	// Set before Run, render's updates go through fyne.Do once it runs
+	desk.SetSystemTrayIcon(icon(Look{}))
+	desk.SetSystemTrayMenu(fyne.NewMenu("unpushed", fyne.NewMenuItem("Settings…", t.showSettings)))
 	// Debounced, a commit or fetch touches several files
 	t.refresh = time.AfterFunc(time.Hour, t.refreshDirty)
 	t.refresh.Stop()
-	go func() {
-		t.scan()
-		scan := time.Tick(scanInterval)
-		for {
-			select {
-			case <-scan:
-				t.scan()
-			case ev := <-w.Events:
-				if ev.Has(fsnotify.Create) && strings.Contains(ev.Name, "/.git/refs/") {
-					if fi, err := os.Stat(ev.Name); err == nil && fi.IsDir() {
-						_ = w.Add(ev.Name)
-					}
-				}
-				if repo, _, ok := strings.Cut(ev.Name, "/.git/"); ok && relevant(ev) {
-					t.mu.Lock()
-					t.dirty[repo] = true
-					t.mu.Unlock()
-					t.refresh.Reset(refreshDelay)
-				}
-			case err := <-w.Errors:
-				slog.Warn(fmt.Sprintf("Watcher error: %s", err))
-			}
-		}
-	}()
+	go t.loop()
+	a.Run()
 }
 
-// scan rediscovers repositories, queries the remotes of those in checkRemote
-// and refreshes what changed.
+func (t *tray) loop() {
+	t.scan()
+	t.lsRemotes()
+	t.mu.Lock()
+	scan, remote := time.NewTimer(t.cfg.ScanInterval.Duration), time.NewTimer(t.cfg.RemoteInterval.Duration)
+	t.mu.Unlock()
+	for {
+		select {
+		case <-scan.C:
+			t.scan()
+		case <-remote.C:
+			t.lsRemotes()
+		case <-t.reconfig:
+			t.scan()
+			t.lsRemotes()
+		case ev := <-t.watcher.Events:
+			if ev.Has(fsnotify.Create) && strings.Contains(ev.Name, "/.git/refs/") {
+				if fi, err := os.Stat(ev.Name); err == nil && fi.IsDir() {
+					_ = t.watcher.Add(ev.Name)
+				}
+			}
+			if repo, _, ok := strings.Cut(ev.Name, "/.git/"); ok && relevant(ev) {
+				t.mu.Lock()
+				t.dirty[repo] = true
+				t.mu.Unlock()
+				t.refresh.Reset(refreshDelay)
+			}
+			continue
+		case err := <-t.watcher.Errors:
+			slog.Warn(fmt.Sprintf("Watcher error: %s", err))
+			continue
+		}
+		// The intervals may have changed with the config
+		t.mu.Lock()
+		scan.Reset(t.cfg.ScanInterval.Duration)
+		remote.Reset(t.cfg.RemoteInterval.Duration)
+		t.mu.Unlock()
+	}
+}
+
+// scan rediscovers repositories and refreshes the new ones.
 func (t *tray) scan() {
 	t.mu.Lock()
 	cfg := t.cfg
 	t.mu.Unlock()
 	var found []Repo
-	for _, path := range cfg.Repos {
-		found = append(found, Repo{Path: path, Name: filepath.Base(path)})
-	}
-	for _, root := range cfg.Roots {
-		if len(cfg.Repos) > 0 {
-			break
+	if len(cfg.Repos) > 0 {
+		for _, path := range cfg.Repos {
+			found = append(found, Repo{Path: path, Name: filepath.Base(path)})
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), scanInterval)
-		repos, err := Scan(ctx, root, cfg.Depth)
-		cancel()
-		if err != nil {
-			slog.Error(err.Error())
-		}
-		for _, r := range repos {
-			if !slices.Contains(cfg.Ignore, r.Path) {
-				found = append(found, r)
+	} else {
+		for _, root := range cfg.Roots {
+			ctx, cancel := context.WithTimeout(context.Background(), cfg.ScanInterval.Duration)
+			repos, err := Scan(ctx, root, cfg.Depth)
+			cancel()
+			if err != nil {
+				slog.Error(err.Error())
 			}
+			found = append(found, repos...)
 		}
 	}
-	watch(t.watcher, found)
-	t.mu.Lock()
-	repos := map[string]*Repo{}
+	var paths []string
+	var listed []Repo
 	for _, r := range found {
+		paths = append(paths, r.Path)
+		if !slices.Contains(cfg.Ignore, r.Path) {
+			listed = append(listed, r)
+		}
+	}
+	watch(t.watcher, listed)
+	t.mu.Lock()
+	t.found = paths
+	repos := map[string]*Repo{}
+	for _, r := range listed {
 		if known, ok := t.repos[r.Path]; ok {
 			repos[r.Path] = known
 		} else {
@@ -173,28 +155,43 @@ func (t *tray) scan() {
 	}
 	t.repos = repos
 	t.mu.Unlock()
-	for _, path := range cfg.CheckRemote {
-		t.lsRemote(path)
-	}
 	t.refreshDirty()
 }
 
-// lsRemote stores the remote heads of a known repo and marks it dirty.
-func (t *tray) lsRemote(path string) {
-	r := Repo{Path: path}
-	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
-	err := r.LsRemote(ctx)
-	cancel()
-	if err != nil {
-		slog.Warn(err.Error())
-		return
-	}
+// lsRemotes queries the remotes of the repos in checkRemote.
+func (t *tray) lsRemotes() {
 	t.mu.Lock()
-	if known, ok := t.repos[path]; ok {
-		known.RemoteHeads = r.RemoteHeads
-		t.dirty[path] = true
+	var paths []string
+	for _, path := range t.cfg.CheckRemote {
+		if _, ok := t.repos[path]; ok {
+			paths = append(paths, path)
+		}
+	}
+	// Repos taken out of checkRemote stop counting what the remote has
+	for path, r := range t.repos {
+		if r.RemoteHeads != nil && !slices.Contains(t.cfg.CheckRemote, path) {
+			r.RemoteHeads = nil
+			t.dirty[path] = true
+		}
 	}
 	t.mu.Unlock()
+	for _, path := range paths {
+		r := Repo{Path: path}
+		ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+		err := r.LsRemote(ctx)
+		cancel()
+		if err != nil {
+			slog.Warn(err.Error())
+			continue
+		}
+		t.mu.Lock()
+		if known, ok := t.repos[path]; ok {
+			known.RemoteHeads = r.RemoteHeads
+			t.dirty[path] = true
+		}
+		t.mu.Unlock()
+	}
+	t.refreshDirty()
 }
 
 func (t *tray) refreshDirty() {
@@ -230,37 +227,20 @@ func (t *tray) refreshDirty() {
 	t.render()
 }
 
-// render updates the menu and the tray LED. Called with mu held.
+// render rebuilds the tray menu and icon. Called with mu held.
 func (t *tray) render() {
 	var all []Repo
+	tray := Look{}
 	for r := range maps.Values(t.repos) {
 		if r.HasRemote {
 			all = append(all, *r)
+			tray = tray.Union(t.look(*r))
 		}
 	}
-	tray := Synced
-	for _, r := range all {
-		ahead, behind, unknown := r.Counts()
-		if ahead > 0 {
-			tray = Ahead
-		} else if (behind > 0 || unknown) && tray == Synced {
-			tray = Behind
-		}
-	}
-	systray.SetIcon(icons[tray])
-
 	t.shown = MostActive(all, t.cfg.Max)
-	for i, item := range t.items {
-		if i >= len(t.shown) {
-			item.Hide()
-			t.ignores[i].Hide()
-			t.remotes[i].Hide()
-			continue
-		}
-		r := t.shown[i]
-		state := t.state(r)
-		name := strings.ReplaceAll(r.Name, "_", "__") // _ marks a mnemonic in dbusmenu
-		title := name
+	var items []*fyne.MenuItem
+	for i, r := range t.shown {
+		title := r.Name
 		ahead, behind, unknown := r.Counts()
 		if ahead > 0 {
 			title += fmt.Sprintf("  ↑%d", ahead)
@@ -270,31 +250,28 @@ func (t *tray) render() {
 		} else if behind > 0 {
 			title += fmt.Sprintf("  ↓%d", behind)
 		}
-		if state == Failed {
+		if t.state(r) == Failed {
 			title += "  (open shell)"
 		}
-		var tip []string
-		for _, b := range r.Branches {
-			if b.Unknown {
-				tip = append(tip, fmt.Sprintf("%s ↑%d, remote has unfetched commits", b.Name, b.Ahead))
-			} else if b.Ahead > 0 || b.Behind > 0 || b.Gone {
-				tip = append(tip, fmt.Sprintf("%s ↑%d ↓%d%s", b.Name, b.Ahead, b.Behind, map[bool]string{true: " (upstream gone)"}[b.Gone]))
-			}
-		}
-		item.SetTitle(title)
-		item.SetTooltip(strings.Join(tip, "\n"))
-		item.SetIcon(icons[state])
-		item.Show()
-		t.ignores[i].SetTitle(name)
-		t.ignores[i].Show()
-		t.remotes[i].SetTitle(name)
-		if slices.Contains(t.cfg.CheckRemote, r.Path) {
-			t.remotes[i].Check()
-		} else {
-			t.remotes[i].Uncheck()
-		}
-		t.remotes[i].Show()
+		items = append(items, fyne.NewMenuItemWithIcon(title, icon(t.look(r)), func() { go t.click(i) }))
 	}
+	if len(items) == 0 {
+		items = append(items, &fyne.MenuItem{Label: "No repositories", Disabled: true})
+	}
+	// fyne adds Quit
+	items = append(items, fyne.NewMenuItemSeparator(), fyne.NewMenuItem("Settings…", t.showSettings))
+	menu := fyne.NewMenu("unpushed", items...)
+	fyne.Do(func() {
+		t.desk.SetSystemTrayIcon(icon(tray))
+		t.desk.SetSystemTrayMenu(menu)
+	})
+}
+
+// look adds a failed sync to the repo's look. Called with mu held.
+func (t *tray) look(r Repo) Look {
+	l := r.Look()
+	l.Failed = l.Failed || t.failed[r.Path]
+	return l
 }
 
 // state is the repo's own state, unless its last sync failed. Called with mu held.
@@ -350,83 +327,21 @@ func (t *tray) click(i int) {
 	t.refreshDirty()
 }
 
-func (t *tray) ignore(i int) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if i >= len(t.shown) {
-		return
+// applyConfig saves cfg and rescans with it.
+func (t *tray) applyConfig(cfg Config) error {
+	if err := saveConfig(cfg); err != nil {
+		return err
 	}
-	path := t.shown[i].Path
-	if err := ignoreRepo(path); err != nil {
-		slog.Error(err.Error())
-		return
-	}
-	if err := t.reload(); err != nil {
-		slog.Error(err.Error())
-		return
-	}
-	delete(t.repos, path)
-	t.render()
-}
-
-func (t *tray) toggleRemote(i int) {
-	t.mu.Lock()
-	if i >= len(t.shown) {
-		t.mu.Unlock()
-		return
-	}
-	path := t.shown[i].Path
-	on, err := toggleCheckRemote(path)
-	if err == nil {
-		err = t.reload()
-	}
-	if err == nil && !on {
-		if known, ok := t.repos[path]; ok {
-			known.RemoteHeads = nil
-		}
-		t.dirty[path] = true
-	}
-	t.mu.Unlock()
-	if err != nil {
-		slog.Error(err.Error())
-		return
-	}
-	if on {
-		t.lsRemote(path)
-	}
-	t.refreshDirty()
-}
-
-func (t *tray) addRepo() {
-	home, _ := os.UserHomeDir()
-	uris, err := filechooser.OpenFile("", "Add repository", &filechooser.OpenFileOptions{Directory: true, CurrentFolder: home})
-	if err != nil {
-		slog.Error(fmt.Sprintf("Unable to open file chooser: %s", err))
-		return
-	}
-	for _, uri := range uris {
-		if err := addRepo(strings.TrimPrefix(uri, "file://")); err != nil {
-			slog.Error(err.Error())
-		}
-	}
-	t.mu.Lock()
-	err = t.reload()
-	t.mu.Unlock()
-	if err != nil {
-		slog.Error(err.Error())
-		return
-	}
-	t.scan()
-}
-
-// reload rereads the config after an edit. Max stays, the menu is built.
-// Called with mu held.
-func (t *tray) reload() error {
-	cfg, err := loadConfig()
+	loaded, err := loadConfig()
 	if err != nil {
 		return err
 	}
-	cfg.Max = t.cfg.Max
-	t.cfg = cfg
+	t.mu.Lock()
+	t.cfg = loaded
+	t.mu.Unlock()
+	select {
+	case t.reconfig <- struct{}{}:
+	default:
+	}
 	return nil
 }

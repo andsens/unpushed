@@ -266,3 +266,8 @@ func soleRemote(ctx context.Context, dir string) (string, error) {
 	}
 	return remotes[0], nil
 }
+
+func (r Repo) Look() Look {
+	ahead, behind, unknown := r.Counts()
+	return Look{Up: ahead > 0, Down: behind > 0 || unknown, Failed: r.State() == Failed}
+}
