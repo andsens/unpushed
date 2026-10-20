@@ -10,6 +10,9 @@ import (
 	"github.com/rymdport/portal/filechooser"
 )
 
+// portal is pinned past v0.4.2, which took any signal on the session bus for
+// the chooser's response, fyne's own settings signals included.
+//
 // pickDirs lets the user pick directories through the portal, hands each to
 // add and calls done once they're all in.
 func (t *tray) pickDirs(title string, add func(path string), done func()) {

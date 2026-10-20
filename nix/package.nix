@@ -19,7 +19,7 @@ buildGo126Module {
   name = "unpushed";
   meta.mainProgram = "unpushed";
   src = ../src;
-  vendorHash = "sha256-cj7Z1I3Bg3Q2n6hBR9zyVHoWzOwrtUFg/u4zfak3jt4=";
+  vendorHash = "sha256-0dx5bZONDcsmPkq3x70ZV38pAOppwOPomCjK7ZAZEvM=";
   # go-glfw builds for either X11 or Wayland, migrated_fynedo has fyne check
   # that UI calls come through fyne.Do
   tags = [

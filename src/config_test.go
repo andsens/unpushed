@@ -14,6 +14,8 @@ func TestSaveConfig(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", root)
 	t.Setenv("HOME", root)
 	t.Setenv("AppData", root)
+	// Windows takes the home from USERPROFILE
+	t.Setenv("USERPROFILE", root)
 	// macOS ignores XDG_CONFIG_HOME, so ask where the file goes
 	file, err := configPath()
 	if err != nil {
