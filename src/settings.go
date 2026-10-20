@@ -4,6 +4,7 @@ import (
 	"image/color"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -79,40 +80,7 @@ func (t *tray) showSettings() {
 	}
 	buildRoots()
 
-	rows := container.NewVBox()
-	descending := false
-	sortButton := widget.NewButton("", nil)
-	toggle := func(list *[]string, path string) func(bool) {
-		return func(on bool) {
-			*list = slices.DeleteFunc(*list, func(p string) bool { return p == path })
-			if on {
-				*list = append(*list, path)
-			}
-		}
-	}
-	buildRepos := func() {
-		rows.RemoveAll()
-		sortButton.SetText(map[bool]string{false: "Path ↑", true: "Path ↓"}[descending])
-		slices.Sort(found)
-		if descending {
-			slices.Reverse(found)
-		}
-		for _, path := range found {
-			// The eye is lit while the repo is listed, the refresh icon while its
-			// remote is checked
-			ignore := iconToggle(theme.VisibilityIcon(), !slices.Contains(d.Ignore, path), func(on bool) { toggle(&d.Ignore, path)(!on) })
-			remote := iconToggle(theme.ViewRefreshIcon(), slices.Contains(d.CheckRemote, path), toggle(&d.CheckRemote, path))
-			rows.Add(container.NewBorder(nil, nil, nil, container.NewHBox(ignore, remote), widget.NewLabel(tilde(path))))
-		}
-		if len(rows.Objects) == 0 {
-			rows.Add(widget.NewLabel("No repositories found yet."))
-		}
-	}
-	sortButton.OnTapped = func() {
-		descending = !descending
-		buildRepos()
-	}
-	buildRepos()
+	reposTable := t.reposTable(found, &d)
 
 	rootsList := container.NewVScroll(roots)
 	rootsList.SetMinSize(fyne.NewSize(0, 110))
@@ -128,17 +96,10 @@ func (t *tray) showSettings() {
 		widget.NewFormItem("Max repos in the menu", max),
 		widget.NewFormItem("Remote check interval", remoteEvery),
 	))
-	// The sunken list is frame enough
-	reposTitle := widget.NewLabelWithStyle("Repositories found", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	// fyne has no tooltips, so a legend says what the toggles do
-	legend := container.NewHBox(
-		widget.NewIcon(theme.VisibilityIcon()), widget.NewLabel("Shown in the menu, click to ignore"),
-		layout.NewSpacer(),
-		widget.NewIcon(theme.ViewRefreshIcon()), widget.NewLabel("Remote checked for commits to pull"),
-	)
+	// The sunken table is frame enough
 	repos := container.NewBorder(
-		container.NewBorder(nil, nil, nil, sortButton, reposTitle), legend, nil, nil,
-		sunken(container.NewVScroll(rows)),
+		widget.NewLabelWithStyle("Repositories found", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), nil, nil, nil,
+		sunken(reposTable),
 	)
 
 	save := widget.NewButton("Save", func() {
@@ -173,24 +134,123 @@ func group(title string, content fyne.CanvasObject) fyne.CanvasObject {
 	)
 }
 
-// iconToggle is a flat button showing icon lit when on and greyed out when off.
-func iconToggle(icon fyne.Resource, on bool, changed func(on bool)) *widget.Button {
-	b := widget.NewButtonWithIcon("", nil, nil)
-	b.Importance = widget.LowImportance
-	show := func() {
-		if on {
-			b.SetIcon(icon)
+// reposTable lists the found repositories with a toggle each for ignoring
+// them and checking their remote. Clicking a header sorts by that column.
+func (t *tray) reposTable(found []string, d *Config) fyne.CanvasObject {
+	headers := []string{"Path", "Include", "Refresh"}
+	icons := []fyne.Resource{nil, theme.VisibilityIcon(), theme.ViewRefreshIcon()}
+	// Whether a column's toggle is on for path; the eye is lit while the repo
+	// is included, the refresh icon while its remote is checked
+	on := func(col int, path string) bool {
+		if col == 1 {
+			return !slices.Contains(d.Ignore, path)
+		}
+		return slices.Contains(d.CheckRemote, path)
+	}
+	flip := func(col int, path string) {
+		list := &d.CheckRemote
+		if col == 1 {
+			list = &d.Ignore
+		}
+		if slices.Contains(*list, path) {
+			*list = slices.DeleteFunc(*list, func(p string) bool { return p == path })
 		} else {
-			b.SetIcon(theme.NewDisabledResource(icon))
+			*list = append(*list, path)
 		}
 	}
-	b.OnTapped = func() {
-		on = !on
-		show()
-		changed(on)
+	sortCol, descending := 0, false
+	sortRows := func() {
+		slices.SortFunc(found, func(a, b string) int {
+			c := 0
+			if sortCol > 0 && on(sortCol, a) != on(sortCol, b) {
+				c = map[bool]int{true: -1, false: 1}[on(sortCol, a)]
+			}
+			if c == 0 {
+				c = strings.Compare(a, b)
+			}
+			if descending {
+				return -c
+			}
+			return c
+		})
 	}
-	show()
-	return b
+	sortRows()
+
+	var table *widget.Table
+	table = widget.NewTableWithHeaders(
+		func() (int, int) { return len(found), len(headers) },
+		func() fyne.CanvasObject {
+			b := widget.NewButtonWithIcon("", nil, nil)
+			b.Importance = widget.LowImportance
+			l := widget.NewLabel("")
+			l.Truncation = fyne.TextTruncateEllipsis
+			return container.NewStack(l, b)
+		},
+		func(id widget.TableCellID, o fyne.CanvasObject) {
+			l, b := o.(*fyne.Container).Objects[0].(*widget.Label), o.(*fyne.Container).Objects[1].(*widget.Button)
+			path := found[id.Row]
+			if id.Col == 0 {
+				l.SetText(tilde(path))
+				l.Show()
+				b.Hide()
+				return
+			}
+			l.Hide()
+			b.Show()
+			if on(id.Col, path) {
+				b.SetIcon(icons[id.Col])
+			} else {
+				b.SetIcon(theme.NewDisabledResource(icons[id.Col]))
+			}
+			b.OnTapped = func() {
+				flip(id.Col, path)
+				table.RefreshItem(id)
+			}
+		},
+	)
+	table.ShowHeaderColumn = false
+	table.CreateHeader = func() fyne.CanvasObject {
+		b := widget.NewButton("", nil)
+		b.Importance = widget.LowImportance
+		b.Alignment = widget.ButtonAlignLeading
+		return b
+	}
+	table.UpdateHeader = func(id widget.TableCellID, o fyne.CanvasObject) {
+		b := o.(*widget.Button)
+		text := headers[id.Col]
+		if id.Col == sortCol {
+			text += map[bool]string{false: " ↑", true: " ↓"}[descending]
+		}
+		b.SetText(text)
+		b.OnTapped = func() {
+			descending = id.Col == sortCol && !descending
+			sortCol = id.Col
+			sortRows()
+			table.Refresh()
+		}
+	}
+	// The path takes what the toggle columns leave
+	const toggleWidth = 100
+	table.SetColumnWidth(1, toggleWidth)
+	table.SetColumnWidth(2, toggleWidth)
+	return container.New(&stretchFirst{table, 2 * toggleWidth}, table)
+}
+
+// stretchFirst sizes a table's first column to the width its other columns
+// leave, which Table doesn't do on its own.
+type stretchFirst struct {
+	table *widget.Table
+	rest  float32
+}
+
+func (s *stretchFirst) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	// Less the separators between the columns and the scroller's padding
+	s.table.SetColumnWidth(0, max(size.Width-s.rest-2*theme.SeparatorThicknessSize()-2*theme.Padding(), 100))
+	objects[0].Resize(size)
+}
+
+func (s *stretchFirst) MinSize(objects []fyne.CanvasObject) fyne.Size {
+	return objects[0].MinSize()
 }
 
 // sunken puts content on the input background with a border, the way lists
