@@ -191,3 +191,16 @@ func TestFindRepos(t *testing.T) {
 		t.Fatalf("Root repository named %q", repos[0].Name)
 	}
 }
+
+func TestOnlyCheckedOutBranch(t *testing.T) {
+	_, a, _ := setup(t)
+	run(t, a, "git", "switch", "--quiet", "-c", "side")
+	run(t, a, "git", "commit", "--quiet", "--allow-empty", "-m", "side")
+	expect(t, a, Ahead)
+	run(t, a, "git", "switch", "--quiet", "main")
+	expect(t, a, Synced) // side has unpushed commits, but isn't checked out
+	run(t, a, "git", "switch", "--quiet", "--detach")
+	if r := state(t, a); r.Branch != nil || r.State() != Synced {
+		t.Fatalf("Detached HEAD gave %+v", r.Branch)
+	}
+}

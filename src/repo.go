@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -26,7 +25,6 @@ const (
 
 type Branch struct {
 	Name      string
-	Head      bool
 	Upstream  string // refs/remotes/<remote>/<branch>, empty without one
 	Remote    string
 	RemoteRef string
@@ -37,10 +35,10 @@ type Branch struct {
 }
 
 type Repo struct {
-	Path     string
-	Name     string
-	Active   time.Time
-	Branches []Branch
+	Path   string
+	Name   string
+	Active time.Time
+	Branch *Branch // The branch checked out in the main worktree, nil when detached
 	// Repos without a remote have nothing to push to and aren't listed
 	HasRemote bool
 	// Branch tips from ls-remote keyed by <remote>\x00<ref>, nil when the
@@ -112,10 +110,15 @@ func (r *Repo) Refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	r.Branches = nil
+	r.Branch = nil
 	for line := range strings.Lines(out) {
 		f := strings.Split(strings.TrimSuffix(line, "\n"), "\x00")
-		b := Branch{Name: f[0], Head: f[1] == "*", Upstream: f[2], Remote: f[3], RemoteRef: f[4]}
+		// Only the branch checked out in the main worktree counts, the one a
+		// user means by the repository's state
+		if f[1] != "*" {
+			continue
+		}
+		b := Branch{Name: f[0], Upstream: f[2], Remote: f[3], RemoteRef: f[4]}
 		if b.Upstream != "" {
 			if _, err := git(ctx, r.Path, "rev-parse", "--verify", "--quiet", b.Upstream); err != nil {
 				b.Gone = true
@@ -149,7 +152,7 @@ func (r *Repo) Refresh(ctx context.Context) error {
 				b.Behind, _ = strconv.Atoi(behind)
 			}
 		}
-		r.Branches = append(r.Branches, b)
+		r.Branch = &b
 	}
 	return nil
 }
@@ -189,20 +192,17 @@ func (b Branch) State() State {
 }
 
 func (r Repo) State() State {
-	s := Synced
-	for _, b := range r.Branches {
-		s = max(s, b.State())
+	if r.Branch == nil {
+		return Synced
 	}
-	return s
+	return r.Branch.State()
 }
 
 func (r Repo) Counts() (ahead, behind int, unknown bool) {
-	for _, b := range r.Branches {
-		ahead += b.Ahead
-		behind += b.Behind
-		unknown = unknown || b.Unknown
+	if r.Branch == nil {
+		return 0, 0, false
 	}
-	return
+	return r.Branch.Ahead, r.Branch.Behind, r.Branch.Unknown
 }
 
 func (r Repo) Fetch(ctx context.Context) error {
@@ -210,8 +210,8 @@ func (r Repo) Fetch(ctx context.Context) error {
 	return err
 }
 
-// Sync pushes branches that are ahead and fast-forwards branches that are
-// behind, after fetching.
+// Sync pushes the checked-out branch when it's ahead or fast-forwards it when
+// it's behind, after fetching.
 func (r *Repo) Sync(ctx context.Context) error {
 	if err := r.Fetch(ctx); err != nil {
 		return err
@@ -219,33 +219,26 @@ func (r *Repo) Sync(ctx context.Context) error {
 	if err := r.Refresh(ctx); err != nil {
 		return err
 	}
-	var errs []error
-	for _, b := range r.Branches {
-		var err error
-		switch b.State() {
-		case Failed:
-			err = fmt.Errorf("Branch %s has diverged from or lost its upstream", b.Name)
-		case Ahead:
-			if b.Upstream != "" {
-				_, err = git(ctx, r.Path, "push", "--quiet", b.Remote, "refs/heads/"+b.Name+":"+b.RemoteRef)
-			} else if remote, rerr := soleRemote(ctx, r.Path); rerr != nil {
-				err = fmt.Errorf("Branch %s has no upstream: %w", b.Name, rerr)
-			} else {
-				_, err = git(ctx, r.Path, "push", "--quiet", "--set-upstream", remote, b.Name)
-			}
-		case Behind:
-			if b.Head {
-				_, err = git(ctx, r.Path, "merge", "--ff-only", "--quiet", b.Upstream)
-			} else {
-				// A non-forced fetch into a local branch only fast-forwards
-				_, err = git(ctx, r.Path, "fetch", "--quiet", ".", b.Upstream+":refs/heads/"+b.Name)
-			}
-		}
-		if err != nil {
-			errs = append(errs, err)
-		}
+	b := r.Branch
+	if b == nil {
+		return nil
 	}
-	return errors.Join(errs...)
+	var err error
+	switch b.State() {
+	case Failed:
+		err = fmt.Errorf("Branch %s has diverged from or lost its upstream", b.Name)
+	case Ahead:
+		if b.Upstream != "" {
+			_, err = git(ctx, r.Path, "push", "--quiet", b.Remote, "refs/heads/"+b.Name+":"+b.RemoteRef)
+		} else if remote, rerr := soleRemote(ctx, r.Path); rerr != nil {
+			err = fmt.Errorf("Branch %s has no upstream: %w", b.Name, rerr)
+		} else {
+			_, err = git(ctx, r.Path, "push", "--quiet", "--set-upstream", remote, b.Name)
+		}
+	case Behind:
+		_, err = git(ctx, r.Path, "merge", "--ff-only", "--quiet", b.Upstream)
+	}
+	return err
 }
 
 func soleRemote(ctx context.Context, dir string) (string, error) {

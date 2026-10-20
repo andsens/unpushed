@@ -10,7 +10,8 @@
 
 The tray icon sums up every repository it finds. Its menu lists the ones you
 worked in most recently, each with its own icon and the number of commits
-ahead and behind.
+ahead and behind. Only the branch checked out in a repository's main worktree
+counts.
 
 | Icon | Meaning |
 | :-: | --- |
@@ -24,10 +25,9 @@ Repositories without a remote are left out.
 
 ## Using it
 
-Clicking a repository that is ahead or behind fetches, then pushes the
-branches that are ahead and fast-forwards the ones that are behind. When a
-branch has diverged, or the last attempt failed, the click opens a terminal in
-the repository instead, so you can rebase or merge yourself.
+Clicking a yellow repository fetches, then pushes the branch or fast-forwards
+it. Clicking a red one opens a terminal in the repository, so you can rebase or
+merge yourself.
 
 unpushed never fetches on its own, so a down arrow appears once you have
 fetched. For repositories you mark with the refresh icon in the settings, it
