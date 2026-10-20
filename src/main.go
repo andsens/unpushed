@@ -90,6 +90,13 @@ func (t *tray) ready() {
 			t.addRepo()
 		}
 	}()
+	systray.AddSeparator()
+	// Exits cleanly, so the service's Restart=on-failure leaves it stopped
+	quit := systray.AddMenuItem("Quit", "")
+	go func() {
+		<-quit.ClickedCh
+		systray.Quit()
+	}()
 
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
