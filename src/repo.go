@@ -41,6 +41,8 @@ type Repo struct {
 	Name     string
 	Active   time.Time
 	Branches []Branch
+	// Repos without a remote have nothing to push to and aren't listed
+	HasRemote bool
 	// Branch tips from ls-remote keyed by <remote>\x00<ref>, nil when the
 	// remote isn't checked
 	RemoteHeads map[string]string
@@ -108,6 +110,11 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 }
 
 func (r *Repo) Refresh(ctx context.Context) error {
+	remotes, err := git(ctx, r.Path, "remote")
+	if err != nil {
+		return err
+	}
+	r.HasRemote = remotes != ""
 	out, err := git(ctx, r.Path, "for-each-ref", "--format=%(refname:short)%00%(HEAD)%00%(upstream)%00%(upstream:remotename)%00%(upstream:remoteref)", "refs/heads")
 	if err != nil {
 		return err

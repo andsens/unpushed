@@ -150,3 +150,16 @@ func TestLsRemote(t *testing.T) {
 		t.Fatalf("Stale tip gave state %d (%v), want synced", r.State(), err)
 	}
 }
+
+func TestNoRemote(t *testing.T) {
+	_, a, _ := setup(t)
+	local := filepath.Join(t.TempDir(), "local")
+	run(t, filepath.Dir(local), "git", "init", "--quiet", local)
+	run(t, local, "git", "commit", "--quiet", "--allow-empty", "-m", "init")
+	if r := state(t, local); r.HasRemote {
+		t.Fatal("Repo without a remote has one")
+	}
+	if r := state(t, a); !r.HasRemote {
+		t.Fatal("Clone has no remote")
+	}
+}

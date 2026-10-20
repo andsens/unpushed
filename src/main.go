@@ -227,7 +227,9 @@ func (t *tray) refreshDirty() {
 func (t *tray) render() {
 	var all []Repo
 	for r := range maps.Values(t.repos) {
-		all = append(all, *r)
+		if r.HasRemote {
+			all = append(all, *r)
+		}
 	}
 	tray := Synced
 	for _, r := range all {

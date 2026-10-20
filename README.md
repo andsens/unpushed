@@ -8,6 +8,8 @@ repositories, each with an LED:
 - red: commits no remote has
 - ✗: diverged, upstream gone, or the last push/pull failed
 
+Repositories without a remote are left out.
+
 Clicking a red or yellow repo fetches, then pushes branches that are ahead and
 fast-forwards branches that are behind. Clicking a ✗ opens a terminal in the
 repository. Nothing fetches on its own, so yellow shows up after you fetch,
