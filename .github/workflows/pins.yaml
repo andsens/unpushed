@@ -1,0 +1,76 @@
+name: Pins
+
+# Dependabot's gomod ecosystem bumps go.mod and go.sum, but cannot know that
+# vendorHash in nix/package.nix has to match them, so that is put right on the
+# branch before the pull request is merged.
+on:
+  push:
+    branches: ['dependabot/**']
+
+permissions:
+  contents: read
+
+jobs:
+  # Hashing runs the actions this very branch may have bumped, so it happens
+  # in a job of its own that never sees the token the push needs.
+  hash:
+    runs-on: ubuntu-latest
+    # The push below matches this workflow's own trigger, so without this the
+    # workflow would run a second time under a human actor - finding nothing to
+    # do, but also unable to read the token, which only Dependabot events can
+    # reach.
+    if: github.actor == 'dependabot[bot]'
+    outputs:
+      hash: ${{ steps.hash.outputs.hash }}
+    steps:
+    - name: Checkout the branch
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        ref: ${{ github.ref_name }}
+        persist-credentials: false
+    - name: Install Nix
+      uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+      with:
+        extra_nix_config: experimental-features = nix-command flakes
+    - name: Compute vendorHash
+      id: hash
+      run: |
+        # The modules derivation is fixed-output: built against a fake hash it
+        # fails and reports the real one
+        sed -i 's|vendorHash = "sha256-[^"]*";|vendorHash = lib.fakeHash;|' nix/package.nix
+        hash=$(nix build .#default.goModules 2>&1 | grep -oP 'got:\s+\Ksha256-\S+' || true)
+        [[ -n $hash ]] || hash=$(git show HEAD:nix/package.nix | grep -oP 'vendorHash = "\Ksha256-[^"]+')
+        echo "hash=$hash" >> "$GITHUB_OUTPUT"
+
+  pins:
+    needs: hash
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout the branch
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        ref: ${{ github.ref_name }}
+        # A push made with the default GITHUB_TOKEN starts no workflow runs, so
+        # the commit below would carry no checks and auto-merge would wait on
+        # them forever. A personal access token does start them.
+        #
+        # It has to live in Dependabot secrets rather than Actions secrets:
+        # runs triggered by Dependabot are treated as though they came from a
+        # fork and cannot read the latter.
+        #
+        # It stays in .git/config for the push, so no other action may run in
+        # this job.
+        token: ${{ secrets.AUTOMERGE_TOKEN }}
+    - name: Update vendorHash
+      env:
+        HASH: ${{ needs.hash.outputs.hash }}
+      run: |
+        # The hash comes from a job running third-party code
+        [[ $HASH =~ ^sha256-[A-Za-z0-9+/]{43}=$ ]] || { echo "not a hash: $HASH"; exit 1; }
+        sed -i "s|vendorHash = \"sha256-[^\"]*\";|vendorHash = \"$HASH\";|" nix/package.nix
+
+        git diff --quiet && { echo "vendorHash is already current"; exit 0; }
+        git config user.name 'github-actions[bot]'
+        git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+        git commit -m 'nix: Update vendorHash' nix/package.nix
+        git push

@@ -1,0 +1,32 @@
+name: Test
+
+on:
+  # ** rather than *, so pushes to branches with a slash in the name - which
+  # is every branch Dependabot opens - are tested too.
+  push:
+    branches: ['**']
+  # So the checks can be re-run by hand.
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Install Nix
+      uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+      with:
+        extra_nix_config: experimental-features = nix-command flakes
+    # The build runs go test, and fails when vendorHash doesn't match go.sum
+    - name: Build the package
+      run: nix build --print-build-logs .#default
+    - name: Check formatting
+      run: |
+        unformatted=$(nix shell .#default.go -c gofmt -l src)
+        [[ -z $unformatted ]] || { echo "gofmt wants to change:"; echo "$unformatted"; exit 1; }
+    - name: Check the flake
+      run: nix flake check
