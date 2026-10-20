@@ -25,12 +25,20 @@ func TestScreenshots(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("../assets/icon.png", draw(appLayers(), 1024))
+	render := func(path string, res fyne.Resource, size float32) {
+		data, err := renderPNG(res, size)
+		if err != nil {
+			t.Fatal(err)
+		}
+		write(path, data)
+	}
+	test.NewTempApp(t)
+	render("../assets/icon.png", appIcon, 1024)
 	for name, look := range map[string]Look{
 		"synced": {}, "ahead": {Up: true}, "behind": {Down: true},
 		"diverged": {Up: true, Down: true}, "failed": {Up: true, Failed: true},
 	} {
-		write("../docs/icons/"+name+".png", draw(look.layers(), 48))
+		render("../docs/icons/"+name+".png", icon(look), 48)
 	}
 
 	// Example paths, shown with ~ for this home

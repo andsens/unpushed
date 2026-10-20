@@ -107,4 +107,4 @@ go test -tags wayland,screenshots -run Screenshots .
 ```
 
 The icon scheme lives in `src/icons.go`: `Look.Color` picks the colour and
-`Look.layers` the shapes.
+`Look.svg` draws the icon as SVG.
