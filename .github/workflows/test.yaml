@@ -26,6 +26,14 @@ jobs:
     # The build runs go test, and fails when vendorHash doesn't match go.sum
     - name: Build the package
       run: nix build --print-build-logs .#default
+    # The build already ran the tests, this runs them again for a report
+    - name: Test
+      run: nix develop .#default -c bash -c 'cd src && GOFLAGS=-mod=mod go tool gotestsum --junitfile ../test-results.xml -- -tags wayland,migrated_fynedo ./...'
+    - name: Summarize the tests
+      uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2.6
+      if: always()
+      with:
+        paths: test-results.xml
     - name: Check formatting
       run: |
         unformatted=$(nix shell .#default.go -c gofmt -l src)
@@ -57,4 +65,9 @@ jobs:
     - name: Test
       env:
         CGO_ENABLED: "1"
-      run: go test -tags migrated_fynedo ./...
+      run: go tool gotestsum --junitfile ../test-results.xml -- -tags migrated_fynedo ./...
+    - name: Summarize the tests
+      uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2.6
+      if: always()
+      with:
+        paths: test-results.xml
