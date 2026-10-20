@@ -19,6 +19,8 @@ in
     };
   };
   config = lib.mkIf cfg.enable {
+    # For the .desktop file and icon the window is matched with
+    home.packages = [ cfg.package ];
     systemd.user.services.unpushed = {
       Unit = {
         Description = "Tray icon for unpushed commits";

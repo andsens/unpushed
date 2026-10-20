@@ -43,7 +43,19 @@ buildGo126Module {
     util-linux
   ];
   # Suffixed, so the session's own git and terminal win
+  # On Wayland the compositor finds the window's icon through the .desktop
+  # file named for its app ID, which fyne sets to the app's unique ID
   postInstall = ''
+    install -Dm644 ${../assets/icon.svg} $out/share/icons/hicolor/scalable/apps/io.github.andsens.unpushed.svg
+    install -Dm644 /dev/stdin $out/share/applications/io.github.andsens.unpushed.desktop <<EOF
+    [Desktop Entry]
+    Type=Application
+    Name=unpushed
+    Comment=Tray icon for unpushed and unpulled git commits
+    Exec=unpushed
+    Icon=io.github.andsens.unpushed
+    Categories=Development;
+    EOF
     wrapProgram $out/bin/unpushed --suffix PATH : ${
       lib.makeBinPath [
         git

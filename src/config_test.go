@@ -40,7 +40,7 @@ func TestSaveConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Defaults are left out, depth went back to its default, unknown keys stay
-	if len(raw) != 3 || raw["unknown"] != 1.0 || raw["scanInterval"] != "1h" || !slices.Equal(strs(raw["ignore"]), []string{"~/a"}) {
+	if len(raw) != 3 || raw["unknown"] != 1.0 || raw["scanInterval"] != "1h" || !slices.Equal(strs(raw["ignore"]), []string{"~" + string(filepath.Separator) + "a"}) {
 		t.Fatalf("Saved %s", data)
 	}
 	loaded, err := loadConfig()

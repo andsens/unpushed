@@ -33,6 +33,7 @@ func TestScreenshots(t *testing.T) {
 		write(path, data)
 	}
 	test.NewTempApp(t)
+	write("../assets/icon.svg", appIcon.Content())
 	render("../assets/icon.png", appIcon, 1024)
 	for name, look := range map[string]Look{
 		"synced": {}, "ahead": {Up: true}, "behind": {Down: true},

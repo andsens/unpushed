@@ -130,8 +130,14 @@ func (t *tray) showSettings() {
 	))
 	// The sunken list is frame enough
 	reposTitle := widget.NewLabelWithStyle("Repositories found", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	// fyne has no tooltips, so a legend says what the toggles do
+	legend := container.NewHBox(
+		widget.NewIcon(theme.VisibilityIcon()), widget.NewLabel("Shown in the menu, click to ignore"),
+		layout.NewSpacer(),
+		widget.NewIcon(theme.ViewRefreshIcon()), widget.NewLabel("Remote checked for commits to pull"),
+	)
 	repos := container.NewBorder(
-		container.NewBorder(nil, nil, nil, sortButton, reposTitle), nil, nil, nil,
+		container.NewBorder(nil, nil, nil, sortButton, reposTitle), legend, nil, nil,
 		sunken(container.NewVScroll(rows)),
 	)
 

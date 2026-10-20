@@ -172,15 +172,19 @@ func saveConfig(cfg Config) error {
 	return nil
 }
 
+// expand replaces a leading ~ with the home directory. Both / and the OS
+// separator may follow it.
 func expand(path string) string {
-	if home, err := os.UserHomeDir(); err == nil && (path == "~" || strings.HasPrefix(path, "~/")) {
+	home, err := os.UserHomeDir()
+	if err == nil && (path == "~" || strings.HasPrefix(path, "~/") || strings.HasPrefix(path, "~"+string(filepath.Separator))) {
 		path = home + path[1:]
 	}
 	return filepath.Clean(path)
 }
 
 func tilde(path string) string {
-	if home, err := os.UserHomeDir(); err == nil && (path == home || strings.HasPrefix(path, home+"/")) {
+	home, err := os.UserHomeDir()
+	if err == nil && (path == home || strings.HasPrefix(path, home+string(filepath.Separator))) {
 		return "~" + path[len(home):]
 	}
 	return path
