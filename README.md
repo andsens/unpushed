@@ -18,7 +18,7 @@ ahead and behind.
 | <img src="docs/icons/ahead.png" width="24" alt="yellow, up arrow"> | Commits to push |
 | <img src="docs/icons/behind.png" width="24" alt="yellow, down arrow"> | Commits to pull |
 | <img src="docs/icons/diverged.png" width="24" alt="red, both arrows"> | Commits to push and to pull |
-| <img src="docs/icons/failed.png" width="24" alt="red"> | The last push or pull failed |
+| <img src="docs/icons/failed.png" width="24" alt="red, cross"> | The last push or pull failed |
 
 Repositories without a remote are left out.
 

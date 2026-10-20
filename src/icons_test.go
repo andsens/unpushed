@@ -26,10 +26,11 @@ func TestLook(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// The centre is the arrow's white, or the circle's colour without one
+		// The centre is white under a single arrow or the cross, else the
+		// circle's colour
 		r, g, b, _ := img.At(iconSize/2, iconSize/2).RGBA()
 		white := r>>8 == 0xff && g>>8 == 0xff && b>>8 == 0xff
-		if arrowAtCentre := (c.look.Up != c.look.Down); white != arrowAtCentre {
+		if markAtCentre := c.look.Failed || c.look.Up != c.look.Down; white != markAtCentre {
 			t.Errorf("%+v has white at the centre: %t", c.look, white)
 		}
 	}

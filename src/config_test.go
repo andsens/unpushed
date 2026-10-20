@@ -13,7 +13,15 @@ func TestSaveConfig(t *testing.T) {
 	root, a, _ := setup(t)
 	t.Setenv("XDG_CONFIG_HOME", root)
 	t.Setenv("HOME", root)
-	file := filepath.Join(root, "unpushed.json")
+	t.Setenv("AppData", root)
+	// macOS ignores XDG_CONFIG_HOME, so ask where the file goes
+	file, err := configPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(file, []byte(`{"unknown": 1, "depth": 3}`), 0o644); err != nil {
 		t.Fatal(err)
 	}

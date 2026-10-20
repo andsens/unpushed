@@ -37,6 +37,8 @@ jobs:
   # elsewhere: the directory walk, the terminals and fyne's folder dialog.
   go:
     strategy:
+      # Each platform's failures are worth seeing
+      fail-fast: false
       matrix:
         runner: [macos-15, windows-latest]
     runs-on: ${{ matrix.runner }}

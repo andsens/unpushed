@@ -71,9 +71,19 @@ func arrow(cx float64, up bool, width float64) shape {
 	}
 }
 
+// cross is an X of two bars with half width w, reaching r from the centre.
+func cross(w, r float64) shape {
+	return func(x, y float64) bool {
+		inBox := math.Abs(x) <= r && math.Abs(y) <= r
+		return inBox && (math.Abs(x-y)/math.Sqrt2 <= w || math.Abs(x+y)/math.Sqrt2 <= w)
+	}
+}
+
 func (l Look) layers() []layer {
 	layers := []layer{{l.Color(), circle(0.92)}}
 	switch {
+	case l.Failed:
+		layers = append(layers, layer{white, cross(0.11, 0.42)})
 	case l.Up && l.Down:
 		layers = append(layers, layer{white, arrow(-0.3, true, 0.24)}, layer{white, arrow(0.3, false, 0.24)})
 	case l.Up:
