@@ -7,7 +7,6 @@ import (
 	"maps"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -117,22 +116,7 @@ func (t *tray) scan() {
 	t.mu.Lock()
 	cfg := t.cfg
 	t.mu.Unlock()
-	var found []Repo
-	if len(cfg.Repos) > 0 {
-		for _, path := range cfg.Repos {
-			found = append(found, Repo{Path: path, Name: filepath.Base(path)})
-		}
-	} else {
-		for _, root := range cfg.Roots {
-			ctx, cancel := context.WithTimeout(context.Background(), cfg.ScanInterval.Duration)
-			repos, err := Scan(ctx, root, cfg.Depth)
-			cancel()
-			if err != nil {
-				slog.Error(err.Error())
-			}
-			found = append(found, repos...)
-		}
-	}
+	found := FindRepos(cfg.Roots, cfg.Depth, cfg.ScanInterval.Duration)
 	var paths []string
 	var listed []Repo
 	for _, r := range found {

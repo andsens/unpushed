@@ -15,8 +15,7 @@ type Config struct {
 	Roots    []string `json:"roots"`
 	Depth    int      `json:"depth"`
 	Max      int      `json:"max"`
-	// Repos replaces scanning the roots, Ignore filters what the scan finds
-	Repos  []string `json:"repos"`
+	// Ignore filters what the search finds
 	Ignore []string `json:"ignore"`
 	// CheckRemote lists repos whose remotes are queried with ls-remote
 	CheckRemote    []string `json:"checkRemote"`
@@ -110,8 +109,8 @@ func loadConfig() (Config, error) {
 }
 
 func (cfg Config) validate() error {
-	if len(cfg.Repos) > 0 && len(cfg.Ignore) > 0 {
-		return fmt.Errorf("Config sets both repos and ignore, use one")
+	if len(cfg.Roots) == 0 {
+		return fmt.Errorf("Config sets no roots")
 	}
 	if cfg.Depth < 1 || cfg.Max < 1 {
 		return fmt.Errorf("Config sets depth or max below 1")
@@ -120,7 +119,7 @@ func (cfg Config) validate() error {
 }
 
 func (cfg *Config) paths() []*[]string {
-	return []*[]string{&cfg.Roots, &cfg.Repos, &cfg.Ignore, &cfg.CheckRemote}
+	return []*[]string{&cfg.Roots, &cfg.Ignore, &cfg.CheckRemote}
 }
 
 // saveConfig writes cfg, leaving out keys at their default so a changed

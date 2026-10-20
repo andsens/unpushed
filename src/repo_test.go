@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -161,5 +162,23 @@ func TestNoRemote(t *testing.T) {
 	}
 	if r := state(t, a); !r.HasRemote {
 		t.Fatal("Clone has no remote")
+	}
+}
+
+func TestFindRepos(t *testing.T) {
+	root, a, _ := setup(t)
+	nested := filepath.Join(a, "sub", "nested")
+	run(t, a, "git", "init", "--quiet", nested)
+	repos := FindRepos([]string{a, root}, 3, time.Minute)
+	var paths []string
+	for _, r := range repos {
+		paths = append(paths, r.Path)
+	}
+	// a as a root is taken whole, the search below root finds a, b and nested
+	if len(paths) != 4 || paths[0] != a || !slices.Contains(paths, nested) {
+		t.Fatalf("Found %v", paths)
+	}
+	if repos[0].Name != "a" {
+		t.Fatalf("Root repository named %q", repos[0].Name)
 	}
 }

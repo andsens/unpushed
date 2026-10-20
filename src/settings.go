@@ -16,10 +16,22 @@ import (
 	"github.com/rymdport/portal/filechooser"
 )
 
-const (
-	modeScan = "Search the roots"
-	modeList = "Only the listed repositories"
-)
+// intervals are the interval sliders' stops, roughly logarithmic.
+var intervals = []time.Duration{
+	time.Minute, 2 * time.Minute, 5 * time.Minute, 10 * time.Minute, 15 * time.Minute,
+	30 * time.Minute, time.Hour, 2 * time.Hour, 3 * time.Hour, 6 * time.Hour,
+}
+
+// nearestInterval is the index of the stop closest to d.
+func nearestInterval(d time.Duration) int {
+	best := 0
+	for i, stop := range intervals {
+		if (stop - d).Abs() < (intervals[best] - d).Abs() {
+			best = i
+		}
+	}
+	return best
+}
 
 // showSettings opens the settings window on a copy of the current config,
 // which Save applies and closing discards.
@@ -27,7 +39,8 @@ func (t *tray) showSettings() {
 	if t.settings == nil {
 		t.settings = t.app.NewWindow("unpushed settings")
 		t.settings.SetCloseIntercept(t.settings.Hide)
-		t.settings.Resize(fyne.NewSize(640, 720))
+		t.settings.SetIcon(appIcon)
+		t.settings.Resize(fyne.NewSize(640, 760))
 	}
 	t.mu.Lock()
 	d := t.cfg
@@ -36,23 +49,38 @@ func (t *tray) showSettings() {
 	}
 	found := slices.Clone(t.found)
 	t.mu.Unlock()
-	slices.Sort(found)
 
-	roots := widget.NewMultiLineEntry()
-	roots.SetText(strings.Join(mapStrings(d.Roots, tilde), "\n"))
-	depth := widget.NewEntry()
-	depth.SetText(strconv.Itoa(d.Depth))
-	max := widget.NewEntry()
-	max.SetText(strconv.Itoa(d.Max))
-	scanEvery := widget.NewEntry()
-	scanEvery.SetText(d.ScanInterval.String())
-	remoteEvery := widget.NewEntry()
-	remoteEvery.SetText(d.RemoteInterval.String())
+	depth := numberSlider(&d.Depth)
+	max := numberSlider(&d.Max)
+	scanEvery := intervalSlider(&d.ScanInterval)
+	remoteEvery := intervalSlider(&d.RemoteInterval)
+
+	roots := container.NewVBox()
+	addRoot := widget.NewButton("Add root…", nil)
+	var buildRoots func()
+	buildRoots = func() {
+		roots.RemoveAll()
+		for _, path := range d.Roots {
+			remove := widget.NewButton("Remove", func() {
+				d.Roots = slices.DeleteFunc(d.Roots, func(p string) bool { return p == path })
+				buildRoots()
+			})
+			roots.Add(container.NewBorder(nil, nil, nil, remove, widget.NewLabel(tilde(path))))
+		}
+		roots.Add(container.NewHBox(addRoot))
+	}
+	addRoot.OnTapped = func() {
+		t.pickDirs("Add root", func(path string) {
+			if !slices.Contains(d.Roots, path) {
+				d.Roots = append(d.Roots, path)
+			}
+		}, buildRoots)
+	}
+	buildRoots()
 
 	rows := container.NewVBox()
-	heading := widget.NewLabel("")
-	add := widget.NewButton("Add repository…", nil)
-	mode := widget.NewRadioGroup([]string{modeScan, modeList}, nil)
+	descending := false
+	sortButton := widget.NewButton("", nil)
 	toggle := func(list *[]string, path string) func(bool) {
 		return func(on bool) {
 			*list = slices.DeleteFunc(*list, func(p string) bool { return p == path })
@@ -61,87 +89,40 @@ func (t *tray) showSettings() {
 			}
 		}
 	}
-	var build func()
-	build = func() {
+	buildRepos := func() {
 		rows.RemoveAll()
-		if mode.Selected == modeScan {
-			heading.SetText("Repositories found")
-			add.Hide()
-			for _, path := range found {
-				ignore := widget.NewCheck("Ignore", toggle(&d.Ignore, path))
-				ignore.SetChecked(slices.Contains(d.Ignore, path))
-				remote := widget.NewCheck("Check remote", toggle(&d.CheckRemote, path))
-				remote.SetChecked(slices.Contains(d.CheckRemote, path))
-				rows.Add(container.NewBorder(nil, nil, nil, container.NewHBox(ignore, remote), widget.NewLabel(tilde(path))))
-			}
-		} else {
-			heading.SetText("Repositories")
-			add.Show()
-			for _, path := range d.Repos {
-				remote := widget.NewCheck("Check remote", toggle(&d.CheckRemote, path))
-				remote.SetChecked(slices.Contains(d.CheckRemote, path))
-				remove := widget.NewButton("Remove", func() {
-					d.Repos = slices.DeleteFunc(d.Repos, func(p string) bool { return p == path })
-					build()
-				})
-				rows.Add(container.NewBorder(nil, nil, nil, container.NewHBox(remote, remove), widget.NewLabel(tilde(path))))
-			}
+		sortButton.SetText(map[bool]string{false: "Path ↑", true: "Path ↓"}[descending])
+		slices.Sort(found)
+		if descending {
+			slices.Reverse(found)
+		}
+		for _, path := range found {
+			ignore := widget.NewCheck("Ignore", toggle(&d.Ignore, path))
+			ignore.SetChecked(slices.Contains(d.Ignore, path))
+			remote := widget.NewCheck("Check remote", toggle(&d.CheckRemote, path))
+			remote.SetChecked(slices.Contains(d.CheckRemote, path))
+			rows.Add(container.NewBorder(nil, nil, nil, container.NewHBox(ignore, remote), widget.NewLabel(tilde(path))))
 		}
 		if len(rows.Objects) == 0 {
-			rows.Add(widget.NewLabel("No repositories yet."))
+			rows.Add(widget.NewLabel("No repositories found yet."))
 		}
 	}
-	add.OnTapped = func() {
-		home, _ := os.UserHomeDir()
-		go func() {
-			uris, err := filechooser.OpenFile("", "Add repository", &filechooser.OpenFileOptions{Directory: true, Multiple: true, CurrentFolder: home})
-			fyne.Do(func() {
-				if err != nil {
-					dialog.ShowError(fmt.Errorf("Unable to open the file chooser: %w", err), t.settings)
-					return
-				}
-				for _, uri := range uris {
-					path := strings.TrimPrefix(uri, "file://")
-					if !isRepo(path) {
-						dialog.ShowError(fmt.Errorf("%s is not a git repository", path), t.settings)
-					} else if !slices.Contains(d.Repos, path) {
-						d.Repos = append(d.Repos, path)
-					}
-				}
-				build()
-			})
-		}()
+	sortButton.OnTapped = func() {
+		descending = !descending
+		buildRepos()
 	}
-	mode.OnChanged = func(m string) {
-		// Start a list from what the search shows
-		if m == modeList && len(d.Repos) == 0 {
-			for _, path := range found {
-				if !slices.Contains(d.Ignore, path) {
-					d.Repos = append(d.Repos, path)
-				}
-			}
-		}
-		roots.Enable()
-		depth.Enable()
-		if m == modeList {
-			roots.Disable()
-			depth.Disable()
-		}
-		build()
-	}
-	mode.Required = true
-	if len(d.Repos) > 0 {
-		mode.SetSelected(modeList)
-	} else {
-		mode.SetSelected(modeScan)
-	}
+	buildRepos()
+
+	form := widget.NewForm(
+		widget.NewFormItem("Roots", roots),
+		widget.NewFormItem("Depth", depth),
+		widget.NewFormItem("Listed in the menu", max),
+		widget.NewFormItem("Search every", scanEvery),
+		widget.NewFormItem("Check remotes every", remoteEvery),
+	)
 
 	save := widget.NewButton("Save", func() {
-		cfg, err := parseSettings(d, mode.Selected, roots.Text, depth.Text, max.Text, scanEvery.Text, remoteEvery.Text)
-		if err == nil {
-			err = t.applyConfig(cfg)
-		}
-		if err != nil {
+		if err := t.applyConfig(d); err != nil {
 			dialog.ShowError(err, t.settings)
 			return
 		}
@@ -150,21 +131,9 @@ func (t *tray) showSettings() {
 	save.Importance = widget.HighImportance
 	cancel := widget.NewButton("Cancel", t.settings.Hide)
 
-	path, _ := configPath()
-	form := widget.NewForm(
-		widget.NewFormItem("Repositories", mode),
-		widget.NewFormItem("Roots", roots),
-		widget.NewFormItem("Depth", depth),
-		widget.NewFormItem("Listed in the menu", max),
-		widget.NewFormItem("Search every", scanEvery),
-		widget.NewFormItem("Check remotes every", remoteEvery),
-	)
 	t.settings.SetContent(container.NewBorder(
-		container.NewVBox(form, container.NewBorder(nil, nil, nil, add, heading)),
-		container.NewVBox(
-			widget.NewLabelWithStyle(tilde(path), fyne.TextAlignLeading, fyne.TextStyle{Italic: true}),
-			container.NewHBox(layout.NewSpacer(), cancel, save),
-		),
+		container.NewVBox(form, container.NewBorder(nil, nil, widget.NewLabel("Repositories found"), sortButton)),
+		container.NewHBox(layout.NewSpacer(), cancel, save),
 		nil, nil,
 		container.NewVScroll(rows),
 	))
@@ -172,50 +141,46 @@ func (t *tray) showSettings() {
 	t.settings.RequestFocus()
 }
 
-// parseSettings turns the draft and the window's fields into a config.
-func parseSettings(d Config, mode, roots, depth, max, scanEvery, remoteEvery string) (Config, error) {
-	var err error
-	if d.Depth, err = strconv.Atoi(strings.TrimSpace(depth)); err != nil {
-		return d, fmt.Errorf("Depth must be a number")
+// numberSlider sets *v from 1 to 10.
+func numberSlider(v *int) fyne.CanvasObject {
+	label := widget.NewLabel(strconv.Itoa(*v))
+	s := widget.NewSlider(1, 10)
+	s.Value = float64(min(max(*v, 1), 10))
+	s.OnChanged = func(f float64) {
+		*v = int(f)
+		label.SetText(strconv.Itoa(*v))
 	}
-	if d.Max, err = strconv.Atoi(strings.TrimSpace(max)); err != nil {
-		return d, fmt.Errorf("Listed in the menu must be a number")
-	}
-	for _, f := range []struct {
-		to   *Duration
-		text string
-	}{{&d.ScanInterval, scanEvery}, {&d.RemoteInterval, remoteEvery}} {
-		v, err := time.ParseDuration(strings.TrimSpace(f.text))
-		if err != nil || v <= 0 {
-			return d, fmt.Errorf("Intervals are durations like 5m or 1h30m")
-		}
-		f.to.Duration = v
-	}
-	d.Roots = nil
-	for line := range strings.Lines(roots) {
-		if line = strings.TrimSpace(line); line != "" {
-			d.Roots = append(d.Roots, expand(line))
-		}
-	}
-	if mode == modeScan {
-		d.Repos = nil
-		if len(d.Roots) == 0 {
-			return d, fmt.Errorf("Searching needs at least one root")
-		}
-	} else {
-		d.Ignore = nil
-		d.CheckRemote = slices.DeleteFunc(d.CheckRemote, func(p string) bool { return !slices.Contains(d.Repos, p) })
-		if len(d.Repos) == 0 {
-			return d, fmt.Errorf("The list needs at least one repository")
-		}
-	}
-	return d, nil
+	return container.NewBorder(nil, nil, nil, label, s)
 }
 
-func mapStrings(in []string, f func(string) string) []string {
-	out := make([]string, len(in))
-	for i, s := range in {
-		out[i] = f(s)
+// intervalSlider sets *v to one of the interval stops. Until it's moved, *v
+// keeps a value from the config that lies between stops.
+func intervalSlider(v *Duration) fyne.CanvasObject {
+	label := widget.NewLabel(v.String())
+	s := widget.NewSlider(0, float64(len(intervals)-1))
+	s.Value = float64(nearestInterval(v.Duration))
+	s.OnChanged = func(f float64) {
+		v.Duration = intervals[int(f)]
+		label.SetText(v.String())
 	}
-	return out
+	return container.NewBorder(nil, nil, nil, label, s)
+}
+
+// pickDirs lets the user pick directories through the portal, hands each to
+// add and calls done once they're all in.
+func (t *tray) pickDirs(title string, add func(path string), done func()) {
+	home, _ := os.UserHomeDir()
+	go func() {
+		uris, err := filechooser.OpenFile("", title, &filechooser.OpenFileOptions{Directory: true, Multiple: true, CurrentFolder: home})
+		fyne.Do(func() {
+			if err != nil {
+				dialog.ShowError(fmt.Errorf("Unable to open the file chooser: %w", err), t.settings)
+				return
+			}
+			for _, uri := range uris {
+				add(strings.TrimPrefix(uri, "file://"))
+			}
+			done()
+		})
+	}()
 }

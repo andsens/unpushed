@@ -75,6 +75,26 @@ func Scan(ctx context.Context, root string, depth int) ([]Repo, error) {
 	return repos, nil
 }
 
+// FindRepos searches each root, or takes it as it is when it's a repository.
+func FindRepos(roots []string, depth int, timeout time.Duration) []Repo {
+	var found []Repo
+	for _, root := range roots {
+		// Searching would walk the whole working tree for nothing
+		if isRepo(root) {
+			found = append(found, Repo{Path: root, Name: filepath.Base(root)})
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		repos, err := Scan(ctx, root, depth)
+		cancel()
+		if err != nil {
+			slog.Error(err.Error())
+		}
+		found = append(found, repos...)
+	}
+	return found
+}
+
 // MostActive sorts repos by last activity and keeps the first max.
 func MostActive(repos []Repo, max int) []Repo {
 	for i := range repos {

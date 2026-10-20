@@ -118,6 +118,13 @@ func draw(layers []layer) []byte {
 	return buf.Bytes()
 }
 
+// appIcon is the settings window's: both arrows on green, outside the scheme.
+var appIcon = func() fyne.Resource {
+	layers := Look{Up: true, Down: true}.layers()
+	layers[0].color = green
+	return fyne.NewStaticResource("unpushed.png", draw(layers))
+}()
+
 var iconCache sync.Map
 
 func icon(l Look) fyne.Resource {

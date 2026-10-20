@@ -21,12 +21,14 @@ repositories in `checkRemote`, whose remotes are queried with `git ls-remote`.
 That writes nothing to the repository; when the remote has commits you haven't
 fetched the count shows as `↓?`.
 
-Repositories are found by a `find` at idle CPU and IO priority. Ref changes
+Repositories are found by a `find` at idle CPU and IO priority below each
+root. A root that is a repository itself is taken as it is, so listing only
+some repositories means making each one a root. Ref changes
 are picked up through inotify on `.git`, `.git/logs` and `.git/refs`.
 
 "Settings…" in the menu opens a window for everything below. It writes only
-the keys that differ from their defaults. Adding a repository to the list goes
-through the desktop portal's file chooser.
+the keys that differ from their defaults. Roots are added through the desktop
+portal's file chooser.
 
 Linux only, built for Wayland.
 
@@ -35,16 +37,15 @@ Linux only, built for Wayland.
 `~/.config/unpushed.json`, every key optional. The settings window edits it,
 so it can't be a file Home Manager manages:
 
-| Key              | Default | Description                                                         |
-| ---------------- | ------- | ------------------------------------------------------------------- |
-| `roots`          | `["~"]` | Directories to search for repositories                              |
-| `depth`          | `5`     | How many levels below a root a repository may be                    |
-| `max`            | `5`     | How many repositories to list                                       |
-| `repos`          | `[]`    | Repositories to list instead of searching the roots                 |
-| `ignore`         | `[]`    | Repositories to leave out of the search, can't be used with `repos` |
-| `checkRemote`    | `[]`    | Repositories whose remotes are checked for commits to pull          |
-| `scanInterval`   | `"5m"`  | How often to search the roots                                       |
-| `remoteInterval` | `"5m"`  | How often to query the remotes in `checkRemote`                     |
+| Key              | Default | Description                                                |
+| ---------------- | ------- | ---------------------------------------------------------- |
+| `roots`          | `["~"]` | Directories to search for repositories                     |
+| `depth`          | `5`     | How many levels below a root a repository may be           |
+| `max`            | `5`     | How many repositories to list                              |
+| `ignore`         | `[]`    | Repositories to leave out of the search                    |
+| `checkRemote`    | `[]`    | Repositories whose remotes are checked for commits to pull |
+| `scanInterval`   | `"5m"`  | How often to search the roots                              |
+| `remoteInterval` | `"5m"`  | How often to query the remotes in `checkRemote`            |
 
 ## Home Manager
 
