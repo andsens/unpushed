@@ -1,14 +1,17 @@
 package main
 
 import (
+	"image/color"
 	"slices"
 	"strconv"
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -36,7 +39,7 @@ func (t *tray) showSettings() {
 		t.settings = t.app.NewWindow("unpushed settings")
 		t.settings.SetCloseIntercept(t.settings.Hide)
 		t.settings.SetIcon(appIcon)
-		t.settings.Resize(fyne.NewSize(640, 760))
+		t.settings.Resize(fyne.NewSize(680, 860))
 	}
 	t.mu.Lock()
 	d := t.cfg
@@ -63,7 +66,9 @@ func (t *tray) showSettings() {
 			})
 			roots.Add(container.NewBorder(nil, nil, nil, remove, widget.NewLabel(tilde(path))))
 		}
-		roots.Add(container.NewHBox(addRoot))
+		if len(roots.Objects) == 0 {
+			roots.Add(widget.NewLabel("No roots, nothing is searched."))
+		}
 	}
 	addRoot.OnTapped = func() {
 		t.pickDirs("Add root", func(path string) {
@@ -109,12 +114,25 @@ func (t *tray) showSettings() {
 	}
 	buildRepos()
 
-	form := widget.NewForm(
-		widget.NewFormItem("Roots", roots),
-		widget.NewFormItem("Depth", depth),
+	rootsList := container.NewVScroll(roots)
+	rootsList.SetMinSize(fyne.NewSize(0, 110))
+	search := group("Search", container.NewVBox(
+		container.NewBorder(nil, nil, widget.NewLabel("Roots"), addRoot),
+		sunken(rootsList),
+		widget.NewForm(
+			widget.NewFormItem("Depth", depth),
+			widget.NewFormItem("Search every", scanEvery),
+		),
+	))
+	menu := group("Menu", widget.NewForm(
 		widget.NewFormItem("Listed in the menu", max),
-		widget.NewFormItem("Search every", scanEvery),
 		widget.NewFormItem("Check remotes every", remoteEvery),
+	))
+	// The sunken list is frame enough
+	reposTitle := widget.NewLabelWithStyle("Repositories found", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	repos := container.NewBorder(
+		container.NewBorder(nil, nil, nil, sortButton, reposTitle), nil, nil, nil,
+		sunken(container.NewVScroll(rows)),
 	)
 
 	save := widget.NewButton("Save", func() {
@@ -127,14 +145,36 @@ func (t *tray) showSettings() {
 	save.Importance = widget.HighImportance
 	cancel := widget.NewButton("Cancel", t.settings.Hide)
 
-	t.settings.SetContent(container.NewBorder(
-		container.NewVBox(form, container.NewBorder(nil, nil, widget.NewLabel("Repositories found"), sortButton)),
+	t.settings.SetContent(container.NewPadded(container.NewBorder(
+		container.NewVBox(search, menu),
 		container.NewHBox(layout.NewSpacer(), cancel, save),
 		nil, nil,
-		container.NewVScroll(rows),
-	))
+		repos,
+	)))
 	t.settings.Show()
 	t.settings.RequestFocus()
+}
+
+// group frames content with a border under a bold title.
+func group(title string, content fyne.CanvasObject) fyne.CanvasObject {
+	frame := canvas.NewRectangle(color.Transparent)
+	frame.StrokeColor = theme.Color(theme.ColorNameSeparator)
+	frame.StrokeWidth = 1
+	frame.CornerRadius = theme.InputRadiusSize()
+	return container.NewBorder(
+		widget.NewLabelWithStyle(title, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), nil, nil, nil,
+		container.NewStack(frame, container.NewPadded(content)),
+	)
+}
+
+// sunken puts content on the input background with a border, the way lists
+// sit in the window.
+func sunken(content fyne.CanvasObject) fyne.CanvasObject {
+	bg := canvas.NewRectangle(theme.Color(theme.ColorNameInputBackground))
+	bg.StrokeColor = theme.Color(theme.ColorNameInputBorder)
+	bg.StrokeWidth = 1
+	bg.CornerRadius = theme.InputRadiusSize()
+	return container.NewStack(bg, container.NewPadded(content))
 }
 
 // numberSlider sets *v from 1 to 10.
