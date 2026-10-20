@@ -1,6 +1,6 @@
 module github.com/andsens/unpushed
 
-go 1.26.8
+go 1.26
 
 require (
 	fyne.io/systray v1.12.2
