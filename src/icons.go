@@ -62,10 +62,11 @@ func arrow(cx float64, up bool, width float64) shape {
 		if !up {
 			y = -y
 		}
-		// Pointing up: the head from the tip at -0.6 to -0.05, the stem on to 0.55
+		// Pointing up: the head from the tip at -0.6 to -0.05, the stem on to
+		// 0.6, so an up and a down arrow line up
 		dx := math.Abs(x - cx)
 		head := y >= -0.6 && y <= -0.05 && dx <= width*(y+0.6)/0.55
-		stem := y > -0.05 && y <= 0.55 && dx <= width*0.35
+		stem := y > -0.05 && y <= 0.6 && dx <= width*0.35
 		return head || stem
 	}
 }
@@ -83,19 +84,20 @@ func (l Look) layers() []layer {
 	return layers
 }
 
-// draw paints the layers in order, antialiased by 4x4 supersampling.
-func draw(layers []layer) []byte {
+// draw paints the layers in order on a size x size image, antialiased by 4x4
+// supersampling.
+func draw(layers []layer, size int) []byte {
 	const samples = 4
-	img := image.NewNRGBA(image.Rect(0, 0, iconSize, iconSize))
-	for py := range iconSize {
-		for px := range iconSize {
+	img := image.NewNRGBA(image.Rect(0, 0, size, size))
+	for py := range size {
+		for px := range size {
 			var r, g, b, a float64
 			for _, l := range layers {
 				hits := 0
 				for sy := range samples {
 					for sx := range samples {
-						x := (float64(px)+(float64(sx)+0.5)/samples)/iconSize*2 - 1
-						y := (float64(py)+(float64(sy)+0.5)/samples)/iconSize*2 - 1
+						x := (float64(px)+(float64(sx)+0.5)/samples)/float64(size)*2 - 1
+						y := (float64(py)+(float64(sy)+0.5)/samples)/float64(size)*2 - 1
 						if l.shape(x, y) {
 							hits++
 						}
@@ -118,12 +120,14 @@ func draw(layers []layer) []byte {
 	return buf.Bytes()
 }
 
-// appIcon is the settings window's: both arrows on green, outside the scheme.
-var appIcon = func() fyne.Resource {
+// appLayers are the app's own icon: both arrows on green, outside the scheme.
+func appLayers() []layer {
 	layers := Look{Up: true, Down: true}.layers()
 	layers[0].color = green
-	return fyne.NewStaticResource("unpushed.png", draw(layers))
-}()
+	return layers
+}
+
+var appIcon = fyne.NewStaticResource("unpushed.png", draw(appLayers(), iconSize))
 
 var iconCache sync.Map
 
@@ -131,7 +135,7 @@ func icon(l Look) fyne.Resource {
 	if res, ok := iconCache.Load(l); ok {
 		return res.(fyne.Resource)
 	}
-	res := fyne.NewStaticResource(fmt.Sprintf("unpushed-%t-%t-%t.png", l.Up, l.Down, l.Failed), draw(l.layers()))
+	res := fyne.NewStaticResource(fmt.Sprintf("unpushed-%t-%t-%t.png", l.Up, l.Down, l.Failed), draw(l.layers(), iconSize))
 	iconCache.Store(l, res)
 	return res
 }

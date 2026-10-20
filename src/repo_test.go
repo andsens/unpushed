@@ -14,7 +14,7 @@ func run(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("%v: %s: %s", args, err, out)
 	}
@@ -23,7 +23,12 @@ func run(t *testing.T, dir string, args ...string) {
 // setup returns two clones (a, b) of a bare remote with one commit on main.
 func setup(t *testing.T) (root, a, b string) {
 	root = t.TempDir()
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	// An empty global config, /dev/null doesn't exist on Windows
+	global := filepath.Join(root, "gitconfig")
+	if err := os.WriteFile(global, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
 	run(t, root, "git", "init", "--quiet", "--bare", "--initial-branch=main", "remote.git")
 	run(t, root, "git", "clone", "--quiet", "remote.git", "a")
 	a, b = filepath.Join(root, "a"), filepath.Join(root, "b")
@@ -107,14 +112,18 @@ func TestScanAndOrder(t *testing.T) {
 		_ = os.Chtimes(filepath.Join(r, ".git", "logs", "HEAD"), old, old)
 		_ = os.Chtimes(filepath.Join(r, ".git", "HEAD"), old, old)
 	}
-	repos, err := Scan(context.Background(), root, 2)
-	if err != nil {
-		t.Fatal(err)
+	for name, scan := range map[string]func(context.Context, string, int) ([]Repo, error){"Scan": Scan, "walkScan": walkScan} {
+		for depth, want := range map[int]int{2: 2, 3: 3} {
+			repos, err := scan(context.Background(), root, depth)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(repos) != want {
+				t.Fatalf("%s at depth %d found %v, want %d", name, depth, repos, want)
+			}
+		}
 	}
-	if len(repos) != 2 {
-		t.Fatalf("Depth 2 found %v, want a and b", repos)
-	}
-	repos, _ = Scan(context.Background(), root, 3)
+	repos, _ := Scan(context.Background(), root, 3)
 	if top := MostActive(repos, 2); len(top) != 2 || top[0].Path != b {
 		t.Fatalf("MostActive returned %v, want b first", top)
 	}

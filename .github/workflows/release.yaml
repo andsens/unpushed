@@ -1,0 +1,164 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  # auto-release.yaml asks for a run by hand, since a tag it pushes starts
+  # none of its own.
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yaml
+
+  # cgo means every platform builds on a runner of its own. Each job leaves
+  # its files in dist/ for the release job to collect.
+  linux:
+    strategy:
+      matrix:
+        include:
+        - runner: ubuntu-latest
+          target: Linux-x86_64
+        - runner: ubuntu-24.04-arm
+          target: Linux-aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Set up Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: src/go.mod
+        cache-dependency-path: src/go.sum
+    - name: Install the Wayland and GL headers
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y pkg-config libgl-dev libegl-dev libx11-dev libxxf86vm-dev \
+          libwayland-dev wayland-protocols libxkbcommon-dev
+    - name: Build
+      working-directory: src
+      env:
+        CGO_ENABLED: "1"
+      run: go build -tags wayland,migrated_fynedo -trimpath -ldflags=-s -o "../dist/unpushed-${{ matrix.target }}" .
+    - name: Check that the binary is for the right architecture
+      run: file "dist/unpushed-${{ matrix.target }}"
+    - name: Upload
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: unpushed-${{ matrix.target }}
+        path: dist/
+        if-no-files-found: error
+
+  # One app for both architectures: each is built with the matching -arch for
+  # cgo, then lipo joins them.
+  macos:
+    runs-on: macos-15
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Set up Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: src/go.mod
+        cache-dependency-path: src/go.sum
+    - name: Build
+      working-directory: src
+      env:
+        CGO_ENABLED: "1"
+      run: |
+        for arch in arm64:arm64 amd64:x86_64; do
+          CGO_CFLAGS="-arch ${arch#*:}" CGO_LDFLAGS="-arch ${arch#*:}" GOARCH=${arch%%:*} \
+            go build -tags migrated_fynedo -trimpath -ldflags=-s -o "../build/unpushed-${arch%%:*}" .
+        done
+        lipo -create -output ../build/unpushed ../build/unpushed-arm64 ../build/unpushed-amd64
+        lipo -info ../build/unpushed
+    - name: Bundle the app
+      env:
+        VERSION: ${{ github.ref_name }}
+      run: |
+        app=build/unpushed.app/Contents
+        mkdir -p "$app/MacOS" "$app/Resources" build/icon.iconset
+        cp build/unpushed "$app/MacOS/"
+        for size in 16 32 128 256 512; do
+          sips -z $size $size assets/icon.png --out "build/icon.iconset/icon_${size}x${size}.png"
+          sips -z $((size * 2)) $((size * 2)) assets/icon.png --out "build/icon.iconset/icon_${size}x${size}@2x.png"
+        done
+        iconutil -c icns build/icon.iconset -o "$app/Resources/icon.icns"
+        # LSUIElement keeps it out of the Dock, it lives in the menu bar
+        cat >"$app/Info.plist" <<PLIST
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+          <key>CFBundleExecutable</key><string>unpushed</string>
+          <key>CFBundleIdentifier</key><string>io.github.andsens.unpushed</string>
+          <key>CFBundleName</key><string>unpushed</string>
+          <key>CFBundleIconFile</key><string>icon</string>
+          <key>CFBundlePackageType</key><string>APPL</string>
+          <key>CFBundleShortVersionString</key><string>${VERSION#v}</string>
+          <key>CFBundleVersion</key><string>${VERSION#v}</string>
+          <key>LSUIElement</key><true/>
+          <key>NSHighResolutionCapable</key><true/>
+        </dict>
+        </plist>
+        PLIST
+        plutil -lint "$app/Info.plist"
+        mkdir dist
+        ditto -c -k --keepParent build/unpushed.app dist/unpushed-macOS.zip
+    - name: Upload
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: unpushed-macOS
+        path: dist/
+        if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Set up Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: src/go.mod
+        cache-dependency-path: src/go.sum
+    # windowsgui, so starting it opens no console window
+    - name: Build
+      working-directory: src
+      env:
+        CGO_ENABLED: "1"
+      run: go build -tags migrated_fynedo -trimpath -ldflags="-s -H windowsgui" -o ../dist/unpushed-Windows-x86_64.exe .
+    - name: Upload
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: unpushed-Windows-x86_64
+        path: dist/
+        if-no-files-found: error
+
+  release:
+    needs: [test, linux, macos, windows]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    name: Create GitHub release
+    steps:
+    - name: Download the builds
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        path: dist
+        merge-multiple: true
+    - name: Create the release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release create "$GITHUB_REF_NAME" \
+          --repo "$GITHUB_REPOSITORY" \
+          --title "$GITHUB_REF_NAME" \
+          --generate-notes \
+          dist/*

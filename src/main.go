@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"maps"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -87,12 +87,13 @@ func (t *tray) loop() {
 			t.scan()
 			t.lsRemotes()
 		case ev := <-t.watcher.Events:
-			if ev.Has(fsnotify.Create) && strings.Contains(ev.Name, "/.git/refs/") {
+			sep := string(filepath.Separator)
+			if ev.Has(fsnotify.Create) && strings.Contains(ev.Name, sep+".git"+sep+"refs"+sep) {
 				if fi, err := os.Stat(ev.Name); err == nil && fi.IsDir() {
 					_ = t.watcher.Add(ev.Name)
 				}
 			}
-			if repo, _, ok := strings.Cut(ev.Name, "/.git/"); ok && relevant(ev) {
+			if repo, _, ok := strings.Cut(ev.Name, sep+".git"+sep); ok && relevant(ev) {
 				t.mu.Lock()
 				t.dirty[repo] = true
 				t.mu.Unlock()
@@ -284,8 +285,7 @@ func (t *tray) click(i int) {
 	case Synced:
 		return
 	case Failed:
-		// The terminal is the user's pick in xdg-terminals.list
-		cmd := exec.Command("xdg-terminal-exec", "--dir="+r.Path)
+		cmd := terminal(r.Path)
 		cmd.Dir = r.Path
 		if err := cmd.Start(); err != nil {
 			slog.Error(fmt.Sprintf("Unable to start terminal: %s", err))

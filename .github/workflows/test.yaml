@@ -5,6 +5,8 @@ on:
   # is every branch Dependabot opens - are tested too.
   push:
     branches: ['**']
+    tags: ['!v*']
+  workflow_call: {}
   # So the checks can be re-run by hand.
   workflow_dispatch: {}
 
@@ -30,3 +32,27 @@ jobs:
         [[ -z $unformatted ]] || { echo "gofmt wants to change:"; echo "$unformatted"; exit 1; }
     - name: Check the flake
       run: nix flake check
+
+  # The nix job covers Linux. These build and test the code that only compiles
+  # elsewhere: the directory walk, the terminals and fyne's folder dialog.
+  go:
+    strategy:
+      matrix:
+        runner: [macos-15, windows-latest]
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: src
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Set up Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: src/go.mod
+        cache-dependency-path: src/go.sum
+    - name: Test
+      env:
+        CGO_ENABLED: "1"
+      run: go test -tags migrated_fynedo ./...

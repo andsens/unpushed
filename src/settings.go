@@ -1,11 +1,8 @@
 package main
 
 import (
-	"fmt"
-	"os"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -13,7 +10,6 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
-	"github.com/rymdport/portal/filechooser"
 )
 
 // intervals are the interval sliders' stops, roughly logarithmic.
@@ -164,23 +160,4 @@ func intervalSlider(v *Duration) fyne.CanvasObject {
 		label.SetText(v.String())
 	}
 	return container.NewBorder(nil, nil, nil, label, s)
-}
-
-// pickDirs lets the user pick directories through the portal, hands each to
-// add and calls done once they're all in.
-func (t *tray) pickDirs(title string, add func(path string), done func()) {
-	home, _ := os.UserHomeDir()
-	go func() {
-		uris, err := filechooser.OpenFile("", title, &filechooser.OpenFileOptions{Directory: true, Multiple: true, CurrentFolder: home})
-		fyne.Do(func() {
-			if err != nil {
-				dialog.ShowError(fmt.Errorf("Unable to open the file chooser: %w", err), t.settings)
-				return
-			}
-			for _, uri := range uris {
-				add(strings.TrimPrefix(uri, "file://"))
-			}
-			done()
-		})
-	}()
 }

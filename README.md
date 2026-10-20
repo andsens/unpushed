@@ -1,59 +1,109 @@
-# unpushed
+<p align="center">
+  <img src="assets/icon.png" width="96" alt="">
+</p>
 
-A tray icon (StatusNotifierItem) listing your most recently active git
-repositories. Each one gets a circle with an up arrow for unpushed commits and
-a down arrow for unpulled ones:
+<h1 align="center">unpushed</h1>
 
-- green: no arrows, in sync
-- yellow: one arrow, ahead or behind
-- red: both arrows (diverged), or the last push or pull failed
+<p align="center">
+  A tray icon that shows which of your git repositories have commits to push or pull.
+</p>
 
-The tray icon combines every repository found, not only the listed ones.
-Repositories without a remote are left out. The scheme lives in `src/icons.go`:
-`Look.Color` picks the colour, `Look.layers` the shapes.
+The tray icon sums up every repository it finds. Its menu lists the ones you
+worked in most recently, each with its own icon and the number of commits
+ahead and behind.
 
-Clicking a yellow or red repo fetches, then pushes branches that are ahead and
-fast-forwards branches that are behind. When that fails, or the branch has
-diverged, the next click opens a terminal in the repository instead, the one
-`xdg-terminal-exec` picks from `xdg-terminals.list`. Nothing
-fetches on its own, so a down arrow shows up after you fetch, or for
-repositories in `checkRemote`, whose remotes are queried with `git ls-remote`.
-That writes nothing to the repository; when the remote has commits you haven't
-fetched the count shows as `↓?`.
+| Icon | Meaning |
+| :-: | --- |
+| <img src="docs/icons/synced.png" width="24" alt="green"> | In sync |
+| <img src="docs/icons/ahead.png" width="24" alt="yellow, up arrow"> | Commits to push |
+| <img src="docs/icons/behind.png" width="24" alt="yellow, down arrow"> | Commits to pull |
+| <img src="docs/icons/diverged.png" width="24" alt="red, both arrows"> | Commits to push and to pull |
+| <img src="docs/icons/failed.png" width="24" alt="red"> | The last push or pull failed |
 
-Repositories are found by a `find` at idle CPU and IO priority below each
-root. A root that is a repository itself is taken as it is, so listing only
-some repositories means making each one a root. Ref changes
-are picked up through inotify on `.git`, `.git/logs` and `.git/refs`.
+Repositories without a remote are left out.
 
-"Settings…" in the menu opens a window for everything below. It writes only
-the keys that differ from their defaults. Roots are added through the desktop
-portal's file chooser.
+## Using it
 
-Linux only, built for Wayland.
+Clicking a repository that is ahead or behind fetches, then pushes the
+branches that are ahead and fast-forwards the ones that are behind. When a
+branch has diverged, or the last attempt failed, the click opens a terminal in
+the repository instead, so you can rebase or merge yourself.
 
-## Configuration
+unpushed never fetches on its own, so a down arrow appears once you have
+fetched. For repositories you mark with "Check remote" it asks the remote
+directly with `git ls-remote`, which writes nothing to the repository. When the
+remote has commits you haven't fetched, the count shows as `↓?`.
 
-`~/.config/unpushed.json`, every key optional. The settings window edits it,
-so it can't be a file Home Manager manages:
+"Settings…" in the menu opens the settings window:
 
-| Key              | Default | Description                                                |
-| ---------------- | ------- | ---------------------------------------------------------- |
-| `roots`          | `["~"]` | Directories to search for repositories                     |
-| `depth`          | `5`     | How many levels below a root a repository may be           |
-| `max`            | `5`     | How many repositories to list                              |
-| `ignore`         | `[]`    | Repositories to leave out of the search                    |
-| `checkRemote`    | `[]`    | Repositories whose remotes are checked for commits to pull |
-| `scanInterval`   | `"5m"`  | How often to search the roots                              |
-| `remoteInterval` | `"5m"`  | How often to query the remotes in `checkRemote`            |
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/settings-dark.png">
+  <img src="docs/settings-light.png" width="480" alt="The settings window">
+</picture>
 
-## Home Manager
+Every setting is also a key in the config file, see
+[docs/configuration.md](docs/configuration.md).
+
+## Installing
+
+### NixOS and Home Manager
+
+The flake has a package and a Home Manager module that runs unpushed as a user
+service with your graphical session:
 
 ```nix
 {
   inputs.unpushed.url = "github:andsens/unpushed";
-  # ...
+
+  # In your Home Manager configuration
   imports = [ inputs.unpushed.homeModules.default ];
   services.unpushed.enable = true;
 }
 ```
+
+### Releases
+
+The [releases](https://github.com/andsens/unpushed/releases) have builds for:
+
+- **Linux** (`unpushed-Linux-x86_64`, `unpushed-Linux-aarch64`): Wayland only.
+  They need `git`, and `xdg-terminal-exec` for opening terminals.
+- **macOS** (`unpushed-macOS.zip`): an app for Apple silicon and Intel. It
+  isn't signed, so the first launch needs a right click and "Open", or
+  `xattr -d com.apple.quarantine unpushed.app`.
+- **Windows** (`unpushed-Windows-x86_64.exe`): not signed either, so
+  SmartScreen asks before the first run.
+
+## How it works
+
+- **Finding repositories:** on Linux a `find` at idle CPU and IO priority
+  searches each root, elsewhere unpushed walks the directories itself. A root
+  that is a repository is taken as it is, so watching a fixed set of
+  repositories means making each of them a root.
+- **Noticing changes:** it watches `.git`, `.git/logs` and `.git/refs` of every
+  repository it found, so a commit, checkout or fetch shows within a second.
+- **Opening a terminal:** `xdg-terminal-exec` on Linux, which picks the
+  terminal from `xdg-terminals.list`; Terminal on macOS; Windows Terminal on
+  Windows, or a Command Prompt where it isn't installed.
+- **Light and dark:** the settings window follows the desktop's colour scheme.
+
+## Building
+
+```bash
+nix build
+```
+
+Without Nix, Go 1.26 and a C compiler build it from `src/`. On Linux the
+Wayland, xkbcommon and GL development headers are needed as well:
+
+```bash
+go build -tags wayland,migrated_fynedo .
+```
+
+The icons and screenshots in this README are generated:
+
+```bash
+go test -tags wayland,screenshots -run Screenshots .
+```
+
+The icon scheme lives in `src/icons.go`: `Look.Color` picks the colour and
+`Look.layers` the shapes.

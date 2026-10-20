@@ -12,9 +12,9 @@ import (
 )
 
 type Config struct {
-	Roots    []string `json:"roots"`
-	Depth    int      `json:"depth"`
-	Max      int      `json:"max"`
+	Roots []string `json:"roots"`
+	Depth int      `json:"depth"`
+	Max   int      `json:"max"`
 	// Ignore filters what the search finds
 	Ignore []string `json:"ignore"`
 	// CheckRemote lists repos whose remotes are queried with ls-remote

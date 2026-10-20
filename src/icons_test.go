@@ -22,7 +22,7 @@ func TestLook(t *testing.T) {
 		if got != c.want {
 			t.Errorf("%+v is %s, want %s", c.look, got, c.want)
 		}
-		img, err := png.Decode(bytes.NewReader(draw(c.look.layers())))
+		img, err := png.Decode(bytes.NewReader(draw(c.look.layers(), iconSize)))
 		if err != nil {
 			t.Fatal(err)
 		}
