@@ -14,7 +14,8 @@ Repositories without a remote are left out. The scheme lives in `src/icons.go`:
 
 Clicking a yellow or red repo fetches, then pushes branches that are ahead and
 fast-forwards branches that are behind. When that fails, or the branch has
-diverged, the next click opens a terminal in the repository instead. Nothing
+diverged, the next click opens a terminal in the repository instead, the one
+`xdg-terminal-exec` picks from `xdg-terminals.list`. Nothing
 fetches on its own, so a down arrow shows up after you fetch, or for
 repositories in `checkRemote`, whose remotes are queried with `git ls-remote`.
 That writes nothing to the repository; when the remote has commits you haven't
@@ -34,17 +35,16 @@ Linux only, built for Wayland.
 `~/.config/unpushed.json`, every key optional. The settings window edits it,
 so it can't be a file Home Manager manages:
 
-| Key              | Default                    | Description                                                         |
-| ---------------- | -------------------------- | ------------------------------------------------------------------- |
-| `roots`          | `["~"]`                    | Directories to search for repositories                              |
-| `depth`          | `5`                        | How many levels below a root a repository may be                    |
-| `max`            | `5`                        | How many repositories to list                                       |
-| `terminal`       | `["konsole", "--workdir"]` | Command opening a terminal, the repository path is appended         |
-| `repos`          | `[]`                       | Repositories to list instead of searching the roots                 |
-| `ignore`         | `[]`                       | Repositories to leave out of the search, can't be used with `repos` |
-| `checkRemote`    | `[]`                       | Repositories whose remotes are checked for commits to pull          |
-| `scanInterval`   | `"5m"`                     | How often to search the roots                                       |
-| `remoteInterval` | `"5m"`                     | How often to query the remotes in `checkRemote`                     |
+| Key              | Default | Description                                                         |
+| ---------------- | ------- | ------------------------------------------------------------------- |
+| `roots`          | `["~"]` | Directories to search for repositories                              |
+| `depth`          | `5`     | How many levels below a root a repository may be                    |
+| `max`            | `5`     | How many repositories to list                                       |
+| `repos`          | `[]`    | Repositories to list instead of searching the roots                 |
+| `ignore`         | `[]`    | Repositories to leave out of the search, can't be used with `repos` |
+| `checkRemote`    | `[]`    | Repositories whose remotes are checked for commits to pull          |
+| `scanInterval`   | `"5m"`  | How often to search the roots                                       |
+| `remoteInterval` | `"5m"`  | How often to query the remotes in `checkRemote`                     |
 
 ## Home Manager
 

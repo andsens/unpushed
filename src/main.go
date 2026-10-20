@@ -294,14 +294,14 @@ func (t *tray) click(i int) {
 	r := t.shown[i]
 	state := t.state(r)
 	delete(t.failed, r.Path)
-	terminal := t.cfg.Terminal
 	t.mu.Unlock()
 
 	switch state {
 	case Synced:
 		return
 	case Failed:
-		cmd := exec.Command(terminal[0], append(terminal[1:], r.Path)...)
+		// The terminal is the user's pick in xdg-terminals.list
+		cmd := exec.Command("xdg-terminal-exec", "--dir="+r.Path)
 		cmd.Dir = r.Path
 		if err := cmd.Start(); err != nil {
 			slog.Error(fmt.Sprintf("Unable to start terminal: %s", err))

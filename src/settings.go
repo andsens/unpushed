@@ -44,8 +44,6 @@ func (t *tray) showSettings() {
 	depth.SetText(strconv.Itoa(d.Depth))
 	max := widget.NewEntry()
 	max.SetText(strconv.Itoa(d.Max))
-	terminal := widget.NewEntry()
-	terminal.SetText(strings.Join(d.Terminal, " "))
 	scanEvery := widget.NewEntry()
 	scanEvery.SetText(d.ScanInterval.String())
 	remoteEvery := widget.NewEntry()
@@ -139,7 +137,7 @@ func (t *tray) showSettings() {
 	}
 
 	save := widget.NewButton("Save", func() {
-		cfg, err := parseSettings(d, mode.Selected, roots.Text, depth.Text, max.Text, terminal.Text, scanEvery.Text, remoteEvery.Text)
+		cfg, err := parseSettings(d, mode.Selected, roots.Text, depth.Text, max.Text, scanEvery.Text, remoteEvery.Text)
 		if err == nil {
 			err = t.applyConfig(cfg)
 		}
@@ -158,7 +156,6 @@ func (t *tray) showSettings() {
 		widget.NewFormItem("Roots", roots),
 		widget.NewFormItem("Depth", depth),
 		widget.NewFormItem("Listed in the menu", max),
-		widget.NewFormItem("Terminal", terminal),
 		widget.NewFormItem("Search every", scanEvery),
 		widget.NewFormItem("Check remotes every", remoteEvery),
 	)
@@ -176,7 +173,7 @@ func (t *tray) showSettings() {
 }
 
 // parseSettings turns the draft and the window's fields into a config.
-func parseSettings(d Config, mode, roots, depth, max, terminal, scanEvery, remoteEvery string) (Config, error) {
+func parseSettings(d Config, mode, roots, depth, max, scanEvery, remoteEvery string) (Config, error) {
 	var err error
 	if d.Depth, err = strconv.Atoi(strings.TrimSpace(depth)); err != nil {
 		return d, fmt.Errorf("Depth must be a number")
@@ -194,7 +191,6 @@ func parseSettings(d Config, mode, roots, depth, max, terminal, scanEvery, remot
 		}
 		f.to.Duration = v
 	}
-	d.Terminal = strings.Fields(terminal)
 	d.Roots = nil
 	for line := range strings.Lines(roots) {
 		if line = strings.TrimSpace(line); line != "" {

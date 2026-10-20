@@ -13,6 +13,7 @@
   findutils,
   coreutils,
   util-linux,
+  xdg-terminal-exec,
 }:
 buildGo126Module {
   name = "unpushed";
@@ -49,6 +50,7 @@ buildGo126Module {
         findutils
         coreutils
         util-linux
+        xdg-terminal-exec
       ]
     }
   '';

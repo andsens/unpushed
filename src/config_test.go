@@ -52,24 +52,24 @@ func TestParseSettings(t *testing.T) {
 	d.Ignore = []string{"/x"}
 	d.Repos = []string{"/a", "/b"}
 	d.CheckRemote = []string{"/a", "/x"}
-	cfg, err := parseSettings(d, modeList, "/r one\n\n/r2\n", " 3 ", "7", "foot -D", "10m", "1h")
+	cfg, err := parseSettings(d, modeList, "/r one\n\n/r2\n", " 3 ", "7", "10m", "1h")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.Ignore != nil || !slices.Equal(cfg.CheckRemote, []string{"/a"}) || !slices.Equal(cfg.Roots, []string{"/r one", "/r2"}) ||
-		cfg.Depth != 3 || cfg.Max != 7 || !slices.Equal(cfg.Terminal, []string{"foot", "-D"}) ||
+		cfg.Depth != 3 || cfg.Max != 7 ||
 		cfg.ScanInterval.Duration != 10*time.Minute || cfg.RemoteInterval.Duration != time.Hour {
 		t.Fatalf("Parsed %+v", cfg)
 	}
-	if cfg, _ = parseSettings(d, modeScan, "/r", "3", "7", "foot", "10m", "1h"); cfg.Repos != nil || cfg.Ignore == nil {
+	if cfg, _ = parseSettings(d, modeScan, "/r", "3", "7", "10m", "1h"); cfg.Repos != nil || cfg.Ignore == nil {
 		t.Fatalf("Scan mode kept repos or dropped ignore: %+v", cfg)
 	}
 	for _, bad := range [][]string{{"x", "7", "10m"}, {"3", "7", "soon"}, {"3", "7", "-5m"}} {
-		if _, err := parseSettings(d, modeScan, "/r", bad[0], bad[1], "foot", bad[2], "1h"); err == nil {
+		if _, err := parseSettings(d, modeScan, "/r", bad[0], bad[1], bad[2], "1h"); err == nil {
 			t.Fatalf("Parsed %v", bad)
 		}
 	}
-	if _, err := parseSettings(d, modeScan, "\n", "3", "7", "foot", "10m", "1h"); err == nil {
+	if _, err := parseSettings(d, modeScan, "\n", "3", "7", "10m", "1h"); err == nil {
 		t.Fatal("Parsed scan mode without roots")
 	}
 }

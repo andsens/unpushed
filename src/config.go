@@ -15,7 +15,6 @@ type Config struct {
 	Roots    []string `json:"roots"`
 	Depth    int      `json:"depth"`
 	Max      int      `json:"max"`
-	Terminal []string `json:"terminal"`
 	// Repos replaces scanning the roots, Ignore filters what the scan finds
 	Repos  []string `json:"repos"`
 	Ignore []string `json:"ignore"`
@@ -63,7 +62,6 @@ func defaultConfig() Config {
 		Roots:          []string{"~"},
 		Depth:          5,
 		Max:            5,
-		Terminal:       []string{"konsole", "--workdir"},
 		ScanInterval:   Duration{5 * time.Minute},
 		RemoteInterval: Duration{5 * time.Minute},
 	}
@@ -114,9 +112,6 @@ func loadConfig() (Config, error) {
 func (cfg Config) validate() error {
 	if len(cfg.Repos) > 0 && len(cfg.Ignore) > 0 {
 		return fmt.Errorf("Config sets both repos and ignore, use one")
-	}
-	if len(cfg.Terminal) == 0 {
-		return fmt.Errorf("Config sets an empty terminal command")
 	}
 	if cfg.Depth < 1 || cfg.Max < 1 {
 		return fmt.Errorf("Config sets depth or max below 1")
