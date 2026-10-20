@@ -98,10 +98,10 @@ func (t *tray) showSettings() {
 			slices.Reverse(found)
 		}
 		for _, path := range found {
-			ignore := widget.NewCheck("Ignore", toggle(&d.Ignore, path))
-			ignore.SetChecked(slices.Contains(d.Ignore, path))
-			remote := widget.NewCheck("Check remote", toggle(&d.CheckRemote, path))
-			remote.SetChecked(slices.Contains(d.CheckRemote, path))
+			// The eye is lit while the repo is listed, the refresh icon while its
+			// remote is checked
+			ignore := iconToggle(theme.VisibilityIcon(), !slices.Contains(d.Ignore, path), func(on bool) { toggle(&d.Ignore, path)(!on) })
+			remote := iconToggle(theme.ViewRefreshIcon(), slices.Contains(d.CheckRemote, path), toggle(&d.CheckRemote, path))
 			rows.Add(container.NewBorder(nil, nil, nil, container.NewHBox(ignore, remote), widget.NewLabel(tilde(path))))
 		}
 		if len(rows.Objects) == 0 {
@@ -116,17 +116,17 @@ func (t *tray) showSettings() {
 
 	rootsList := container.NewVScroll(roots)
 	rootsList.SetMinSize(fyne.NewSize(0, 110))
-	search := group("Search", container.NewVBox(
-		container.NewBorder(nil, nil, widget.NewLabel("Roots"), addRoot),
+	search := group("Scanning", container.NewVBox(
+		container.NewBorder(nil, nil, widget.NewLabel("Scanning roots and repos"), addRoot),
 		sunken(rootsList),
 		widget.NewForm(
-			widget.NewFormItem("Depth", depth),
-			widget.NewFormItem("Search every", scanEvery),
+			widget.NewFormItem("Scanning directory depth", depth),
+			widget.NewFormItem("Scanning interval", scanEvery),
 		),
 	))
 	menu := group("Menu", widget.NewForm(
-		widget.NewFormItem("Listed in the menu", max),
-		widget.NewFormItem("Check remotes every", remoteEvery),
+		widget.NewFormItem("Max repos in the menu", max),
+		widget.NewFormItem("Remote check interval", remoteEvery),
 	))
 	// The sunken list is frame enough
 	reposTitle := widget.NewLabelWithStyle("Repositories found", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
@@ -165,6 +165,26 @@ func group(title string, content fyne.CanvasObject) fyne.CanvasObject {
 		widget.NewLabelWithStyle(title, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), nil, nil, nil,
 		container.NewStack(frame, container.NewPadded(content)),
 	)
+}
+
+// iconToggle is a flat button showing icon lit when on and greyed out when off.
+func iconToggle(icon fyne.Resource, on bool, changed func(on bool)) *widget.Button {
+	b := widget.NewButtonWithIcon("", nil, nil)
+	b.Importance = widget.LowImportance
+	show := func() {
+		if on {
+			b.SetIcon(icon)
+		} else {
+			b.SetIcon(theme.NewDisabledResource(icon))
+		}
+	}
+	b.OnTapped = func() {
+		on = !on
+		show()
+		changed(on)
+	}
+	show()
+	return b
 }
 
 // sunken puts content on the input background with a border, the way lists

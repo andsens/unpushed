@@ -30,9 +30,10 @@ branch has diverged, or the last attempt failed, the click opens a terminal in
 the repository instead, so you can rebase or merge yourself.
 
 unpushed never fetches on its own, so a down arrow appears once you have
-fetched. For repositories you mark with "Check remote" it asks the remote
-directly with `git ls-remote`, which writes nothing to the repository. When the
-remote has commits you haven't fetched, the count shows as `↓?`.
+fetched. For repositories you mark with the refresh icon in the settings, it
+asks the remote directly with `git ls-remote`, which writes nothing to the
+repository. When the remote has commits you haven't fetched, the count shows
+as `↓?`.
 
 "Settings…" in the menu opens the settings window:
 
