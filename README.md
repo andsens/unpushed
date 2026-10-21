@@ -9,8 +9,8 @@
 </p>
 
 The tray icon sums up every repository it finds. Its menu lists the ones you
-worked in most recently, each with its own icon and the number of commits
-ahead and behind. Only the branch checked out in a repository's main worktree
+pinned, then the ones you worked in most recently, each with its own icon and
+the number of commits ahead and behind. Only the branch checked out in a repository's main worktree
 counts.
 
 | Icon | Meaning |
@@ -50,7 +50,8 @@ Every setting is also a key in the config file, see
 ### NixOS and Home Manager
 
 The flake has a package and a Home Manager module that runs unpushed as a user
-service with your graphical session:
+service with your graphical session. `settings` takes every key of the config
+file; the settings window saves your changes on top of them:
 
 ```nix
 {
@@ -58,7 +59,10 @@ service with your graphical session:
 
   # In your Home Manager configuration
   imports = [ inputs.unpushed.homeModules.default ];
-  services.unpushed.enable = true;
+  services.unpushed = {
+    enable = true;
+    settings.roots."~/src".include = true;
+  };
 }
 ```
 
@@ -77,9 +81,10 @@ The [releases](https://github.com/andsens/unpushed/releases) have builds for:
 ## How it works
 
 - **Finding repositories:** on Linux a `find` at idle CPU and IO priority
-  searches each root, elsewhere unpushed walks the directories itself. A root
-  that is a repository is taken as it is, so watching a fixed set of
-  repositories means making each of them a root.
+  searches each root, elsewhere unpushed walks the directories itself.
+  Excluded roots are left out of the search. A root that is a repository is
+  taken as it is, so watching a fixed set of repositories means making each
+  of them a root.
 - **Noticing changes:** it watches `.git`, `.git/logs` and `.git/refs` of every
   repository it found, so a commit, checkout or fetch shows within a second.
 - **Opening a terminal:** `xdg-terminal-exec` on Linux, which picks the
