@@ -5,22 +5,35 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"maps"
 	"path/filepath"
-	"reflect"
+	"slices"
 	"strings"
 	"time"
 )
 
 type Config struct {
-	Roots []string `json:"roots"`
-	Depth int      `json:"depth"`
-	Max   int      `json:"max"`
+	// Roots are searched for repositories, unless excluded. An excluded
+	// directory below an included root is left out of the search.
+	Roots          map[string]Root `json:"roots"`
+	Repos          map[string]RepoConfig `json:"repos"`
+	Depth          int                   `json:"depth"`
+	Max            int                   `json:"max"`
+	ScanInterval   Duration              `json:"scanInterval"`
+	RemoteInterval Duration              `json:"remoteInterval"`
+}
+
+type Root struct {
+	Include bool `json:"include"`
+}
+
+type RepoConfig struct {
 	// Ignore filters what the search finds
-	Ignore []string `json:"ignore"`
-	// CheckRemote lists repos whose remotes are queried with ls-remote
-	CheckRemote    []string `json:"checkRemote"`
-	ScanInterval   Duration `json:"scanInterval"`
-	RemoteInterval Duration `json:"remoteInterval"`
+	Ignore bool `json:"ignore,omitempty"`
+	// CheckRemote has the remotes queried with ls-remote
+	CheckRemote bool `json:"checkRemote,omitempty"`
+	// Pinned repos are listed first
+	Pinned bool `json:"pinned,omitempty"`
 }
 
 // Duration is a time.Duration written as a string ("5m") in the config.
@@ -56,9 +69,11 @@ func (d *Duration) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// defaultConfig has no roots, defaultRoots apply when no layer sets any.
 func defaultConfig() Config {
 	return Config{
-		Roots:          []string{"~"},
+		Roots:          map[string]Root{},
+		Repos:          map[string]RepoConfig{},
 		Depth:          5,
 		Max:            5,
 		ScanInterval:   Duration{5 * time.Minute},
@@ -66,7 +81,13 @@ func defaultConfig() Config {
 	}
 }
 
-func configPath() (string, error) {
+func defaultRoots() map[string]Root {
+	return map[string]Root{expand("~"): {Include: true}}
+}
+
+// userConfigPath is the config the settings window writes, on top of the
+// base config given with --config.
+func userConfigPath() (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("Unable to find config directory: %w", err)
@@ -74,43 +95,98 @@ func configPath() (string, error) {
 	return filepath.Join(dir, "unpushed.json"), nil
 }
 
-func readConfig(v any) error {
-	path, err := configPath()
-	if err != nil {
-		return err
-	}
+// readLayer reads a config file with the paths in its keys expanded. A
+// missing file is empty when optional.
+func readLayer(path string, optional bool) (map[string]any, error) {
+	raw := map[string]any{}
 	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
+	if optional && errors.Is(err, os.ErrNotExist) {
+		return raw, nil
 	} else if err != nil {
-		return fmt.Errorf("Unable to read config: %w", err)
+		return nil, fmt.Errorf("Unable to read config: %w", err)
 	}
-	if err := json.Unmarshal(data, v); err != nil {
-		return fmt.Errorf("Unable to parse %s: %w", path, err)
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("Unable to parse %s: %w", path, err)
 	}
-	return nil
+	for _, key := range []string{"roots", "repos"} {
+		if paths, ok := raw[key].(map[string]any); ok {
+			expanded := map[string]any{}
+			for path, v := range paths {
+				expanded[expand(path)] = v
+			}
+			raw[key] = expanded
+		}
+	}
+	return raw, nil
 }
 
-// loadConfig reads the config with paths expanded.
-func loadConfig() (Config, error) {
-	cfg := defaultConfig()
-	if err := readConfig(&cfg); err != nil {
-		return cfg, err
-	}
-	if err := cfg.validate(); err != nil {
-		return cfg, err
-	}
-	for _, paths := range cfg.paths() {
-		for i, path := range *paths {
-			(*paths)[i] = expand(path)
+// merge sets src's keys in dst. Objects merge key by key, so a layer can
+// override a single property of a repo.
+func merge(dst, src map[string]any) {
+	for k, v := range src {
+		sub, ok := v.(map[string]any)
+		if into, ok2 := dst[k].(map[string]any); ok && ok2 {
+			merge(into, sub)
+		} else {
+			dst[k] = v
 		}
+	}
+}
+
+// decode puts the layers, merged in order, over the defaults.
+func decode(layers ...map[string]any) (Config, error) {
+	merged := map[string]any{}
+	for _, layer := range layers {
+		merge(merged, layer)
+	}
+	cfg := defaultConfig()
+	data, _ := json.Marshal(merged)
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return cfg, fmt.Errorf("Unable to parse config: %w", err)
+	}
+	// "roots": null and the like
+	if cfg.Roots == nil {
+		cfg.Roots = map[string]Root{}
+	}
+	if cfg.Repos == nil {
+		cfg.Repos = map[string]RepoConfig{}
 	}
 	return cfg, nil
 }
 
-func (cfg Config) validate() error {
+// loadConfig reads the base config at base, if any, with the user's config
+// on top. lower is the config without the user's, which saveConfig writes the
+// difference to.
+func loadConfig(base string) (cfg, lower Config, err error) {
+	var baseLayer map[string]any
+	if base != "" {
+		if baseLayer, err = readLayer(base, false); err != nil {
+			return cfg, lower, err
+		}
+	}
+	path, err := userConfigPath()
+	if err != nil {
+		return cfg, lower, err
+	}
+	user, err := readLayer(path, true)
+	if err != nil {
+		return cfg, lower, err
+	}
+	if lower, err = decode(baseLayer); err != nil {
+		return cfg, lower, err
+	}
+	if cfg, err = decode(baseLayer, user); err != nil {
+		return cfg, lower, err
+	}
 	if len(cfg.Roots) == 0 {
-		return fmt.Errorf("Config sets no roots")
+		cfg.Roots = defaultRoots()
+	}
+	return cfg, lower, cfg.validate()
+}
+
+func (cfg Config) validate() error {
+	if !slices.ContainsFunc(slices.Collect(maps.Values(cfg.Roots)), func(r Root) bool { return r.Include }) {
+		return fmt.Errorf("Config includes no roots")
 	}
 	if cfg.Depth < 1 || cfg.Max < 1 {
 		return fmt.Errorf("Config sets depth or max below 1")
@@ -118,43 +194,72 @@ func (cfg Config) validate() error {
 	return nil
 }
 
-func (cfg *Config) paths() []*[]string {
-	return []*[]string{&cfg.Roots, &cfg.Ignore, &cfg.CheckRemote}
+// included are the roots to search, excluded the directories to leave out.
+func (cfg Config) included() (included, excluded []string) {
+	for path, r := range cfg.Roots {
+		if r.Include {
+			included = append(included, path)
+		} else {
+			excluded = append(excluded, path)
+		}
+	}
+	slices.Sort(included)
+	return included, excluded
 }
 
-// saveConfig writes cfg, leaving out keys at their default so a changed
-// default still applies. Keys it doesn't know are kept, though json reorders
-// them.
-func saveConfig(cfg Config) error {
+// saveConfig writes what cfg changes over lower to the user's config, so a
+// changed default or base config still applies where the user didn't
+// override it. Keys it doesn't know are kept, though json reorders them.
+func saveConfig(cfg, lower Config) error {
 	if err := cfg.validate(); err != nil {
 		return err
 	}
-	for _, paths := range cfg.paths() {
-		tilded := make([]string, len(*paths))
-		for i, path := range *paths {
-			tilded[i] = tilde(path)
-		}
-		*paths = tilded
-	}
-	raw := map[string]any{}
-	if err := readConfig(&raw); err != nil {
-		return err
-	}
-	value, defaults := reflect.ValueOf(cfg), reflect.ValueOf(defaultConfig())
-	for i := range value.NumField() {
-		key := value.Type().Field(i).Tag.Get("json")
-		v, d := value.Field(i), defaults.Field(i)
-		// A nil and an empty list are both the default
-		if reflect.DeepEqual(v.Interface(), d.Interface()) || (v.Kind() == reflect.Slice && v.Len() == 0 && d.Len() == 0) {
-			delete(raw, key)
-		} else {
-			raw[key] = v.Interface()
-		}
-	}
-	path, err := configPath()
+	path, err := userConfigPath()
 	if err != nil {
 		return err
 	}
+	raw := map[string]any{}
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return fmt.Errorf("Unable to parse %s: %w", path, err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("Unable to read config: %w", err)
+	}
+	set := func(key string, v any, changed bool) {
+		if changed {
+			raw[key] = v
+		} else {
+			delete(raw, key)
+		}
+	}
+	roots := map[string]Root{}
+	// Left as they came from defaultRoots, they stay unwritten
+	if len(lower.Roots) > 0 || !maps.Equal(cfg.Roots, defaultRoots()) {
+		for path, r := range cfg.Roots {
+			if l, ok := lower.Roots[path]; !ok || l != r {
+				roots[tilde(path)] = r
+			}
+		}
+	}
+	set("roots", roots, len(roots) > 0)
+	repos := map[string]map[string]bool{}
+	for path, r := range cfg.Repos {
+		l, props := lower.Repos[path], map[string]bool{}
+		for key, v := range map[string][2]bool{"ignore": {r.Ignore, l.Ignore}, "checkRemote": {r.CheckRemote, l.CheckRemote}, "pinned": {r.Pinned, l.Pinned}} {
+			if v[0] != v[1] {
+				props[key] = v[0]
+			}
+		}
+		if len(props) > 0 {
+			repos[tilde(path)] = props
+		}
+	}
+	set("repos", repos, len(repos) > 0)
+	set("depth", cfg.Depth, cfg.Depth != lower.Depth)
+	set("max", cfg.Max, cfg.Max != lower.Max)
+	set("scanInterval", cfg.ScanInterval, cfg.ScanInterval != lower.ScanInterval)
+	set("remoteInterval", cfg.RemoteInterval, cfg.RemoteInterval != lower.RemoteInterval)
 	data, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
 		return fmt.Errorf("Unable to encode config: %w", err)

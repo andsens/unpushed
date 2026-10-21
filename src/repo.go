@@ -47,7 +47,8 @@ type Repo struct {
 }
 
 // FindRepos searches each root, or takes it as it is when it's a repository.
-func FindRepos(roots []string, depth int, timeout time.Duration) []Repo {
+// The search leaves out the excluded directories.
+func FindRepos(roots, excluded []string, depth int, timeout time.Duration) []Repo {
 	var found []Repo
 	for _, root := range roots {
 		// Searching would walk the whole working tree for nothing
@@ -56,7 +57,7 @@ func FindRepos(roots []string, depth int, timeout time.Duration) []Repo {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		repos, err := Scan(ctx, root, depth)
+		repos, err := Scan(ctx, root, depth, excluded)
 		cancel()
 		if err != nil {
 			slog.Error(err.Error())
@@ -66,12 +67,18 @@ func FindRepos(roots []string, depth int, timeout time.Duration) []Repo {
 	return found
 }
 
-// MostActive sorts repos by last activity and keeps the first max.
-func MostActive(repos []Repo, max int) []Repo {
+// MostActive sorts repos by last activity, pinned ones first, and keeps the
+// first max.
+func MostActive(repos []Repo, max int, pinned func(path string) bool) []Repo {
 	for i := range repos {
 		repos[i].Active = activity(filepath.Join(repos[i].Path, ".git"))
 	}
-	sort.SliceStable(repos, func(i, j int) bool { return repos[i].Active.After(repos[j].Active) })
+	sort.SliceStable(repos, func(i, j int) bool {
+		if pi, pj := pinned(repos[i].Path), pinned(repos[j].Path); pi != pj {
+			return pi
+		}
+		return repos[i].Active.After(repos[j].Active)
+	})
 	if len(repos) > max {
 		repos = repos[:max]
 	}

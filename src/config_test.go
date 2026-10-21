@@ -4,56 +4,126 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"slices"
+	"reflect"
 	"testing"
 	"time"
 )
 
-func TestSaveConfig(t *testing.T) {
-	root, a, _ := setup(t)
-	t.Setenv("XDG_CONFIG_HOME", root)
-	t.Setenv("HOME", root)
-	t.Setenv("AppData", root)
+// configHome points the home and config directories at a temp dir and
+// returns where the user's config goes.
+func configHome(t *testing.T) (home, file string) {
+	home = t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", home)
+	t.Setenv("HOME", home)
+	t.Setenv("AppData", home)
 	// Windows takes the home from USERPROFILE
-	t.Setenv("USERPROFILE", root)
+	t.Setenv("USERPROFILE", home)
 	// macOS ignores XDG_CONFIG_HOME, so ask where the file goes
-	file, err := configPath()
+	file, err := userConfigPath()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(file, []byte(`{"unknown": 1, "depth": 3}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	return home, file
+}
 
-	cfg := defaultConfig()
-	cfg.Ignore = []string{a}
-	cfg.ScanInterval = Duration{time.Hour}
-	if err := saveConfig(cfg); err != nil {
+func writeJSON(t *testing.T, path, data string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func readJSON(t *testing.T, path string) map[string]any {
+	t.Helper()
 	raw := map[string]any{}
-	data, _ := os.ReadFile(file)
+	data, _ := os.ReadFile(path)
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatal(err)
 	}
-	// Defaults are left out, depth went back to its default, unknown keys stay
-	if len(raw) != 3 || raw["unknown"] != 1.0 || raw["scanInterval"] != "1h" || !slices.Equal(strs(raw["ignore"]), []string{"~" + string(filepath.Separator) + "a"}) {
-		t.Fatalf("Saved %s", data)
-	}
-	loaded, err := loadConfig()
+	return raw
+}
+
+// tl is rel below ~ as saveConfig writes it.
+func tl(rel string) string { return "~" + string(filepath.Separator) + filepath.FromSlash(rel) }
+
+func TestLayers(t *testing.T) {
+	home, file := configHome(t)
+	base := filepath.Join(home, "base.json")
+	writeJSON(t, base, `{"roots": {"~/src": {"include": true}}, "repos": {"~/src/x": {"ignore": true, "checkRemote": true}}, "depth": 3}`)
+	writeJSON(t, file, `{"unknown": 1, "repos": {"~/src/x": {"ignore": false}}, "scanInterval": "1h"}`)
+	src, x, y := filepath.Join(home, "src"), filepath.Join(home, "src", "x"), filepath.Join(home, "src", "y")
+
+	cfg, lower, err := loadConfig(base)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(loaded.Ignore, []string{a}) || loaded.ScanInterval.Duration != time.Hour || loaded.Depth != 5 {
-		t.Fatalf("Loaded %+v", loaded)
+	// The user's config overrides a single property, the default ~ doesn't apply
+	if !reflect.DeepEqual(cfg.Roots, map[string]Root{src: {true}}) || cfg.Repos[x] != (RepoConfig{CheckRemote: true}) ||
+		cfg.Depth != 3 || cfg.Max != 5 || cfg.ScanInterval.Duration != time.Hour {
+		t.Fatalf("Loaded %+v", cfg)
 	}
 
-	cfg.Roots = nil
-	if err := saveConfig(cfg); err == nil {
-		t.Fatal("Saved a config without roots")
+	// Removing a base root excludes it, the user's own root and repo
+	// settings are written, as is a depth back at the built-in default but
+	// not the base's. x goes back to the base's settings, so it's left out.
+	cfg.Roots[src] = Root{}
+	cfg.Roots[filepath.Join(home, "work")] = Root{true}
+	cfg.Repos[x] = RepoConfig{Ignore: true, CheckRemote: true}
+	cfg.Repos[y] = RepoConfig{Pinned: true}
+	cfg.Depth = 5
+	cfg.ScanInterval = Duration{5 * time.Minute}
+	if err := saveConfig(cfg, lower); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"unknown": 1.0,
+		"roots":   map[string]any{tl("src"): map[string]any{"include": false}, tl("work"): map[string]any{"include": true}},
+		"repos":   map[string]any{tl("src/y"): map[string]any{"pinned": true}},
+		"depth":   5.0,
+	}
+	if raw := readJSON(t, file); !reflect.DeepEqual(raw, want) {
+		t.Fatalf("Saved %v", raw)
+	}
+	loaded, _, err := loadConfig(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(loaded, cfg) {
+		t.Fatalf("Loaded %+v, saved %+v", loaded, cfg)
+	}
+
+	cfg.Roots = map[string]Root{src: {}}
+	if err := saveConfig(cfg, lower); err == nil {
+		t.Fatal("Saved a config without included roots")
+	}
+}
+
+func TestDefaultRoots(t *testing.T) {
+	home, file := configHome(t)
+	cfg, lower, err := loadConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cfg.Roots, map[string]Root{home: {true}}) {
+		t.Fatalf("Default roots %v", cfg.Roots)
+	}
+	if err := saveConfig(cfg, lower); err != nil {
+		t.Fatal(err)
+	}
+	if raw := readJSON(t, file); len(raw) != 0 {
+		t.Fatalf("Saved %v", raw)
+	}
+	// With a root added, ~ has to be written too, or it'd be gone
+	cfg.Roots[filepath.Join(home, "src")] = Root{true}
+	if err := saveConfig(cfg, lower); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"~": map[string]any{"include": true}, tl("src"): map[string]any{"include": true}}
+	if raw := readJSON(t, file); !reflect.DeepEqual(raw["roots"], want) {
+		t.Fatalf("Saved %v", raw)
 	}
 }
 
@@ -66,18 +136,6 @@ func TestNearestInterval(t *testing.T) {
 			t.Errorf("%s snapped to %s, want %s", d, got, want)
 		}
 	}
-}
-
-func strs(v any) []string {
-	var out []string
-	if list, ok := v.([]any); ok {
-		for _, s := range list {
-			if s, ok := s.(string); ok {
-				out = append(out, s)
-			}
-		}
-	}
-	return out
 }
 
 func TestDurationString(t *testing.T) {

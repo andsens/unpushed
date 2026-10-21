@@ -45,9 +45,12 @@ func TestScreenshots(t *testing.T) {
 	// Example paths, shown with ~ for this home
 	t.Setenv("HOME", "/home/you")
 	cfg := defaultConfig()
-	cfg.Roots = []string{"/home/you/src", "/home/you/.dotfiles"}
-	cfg.Ignore = []string{"/home/you/src/archive/old-site"}
-	cfg.CheckRemote = []string{"/home/you/src/work/api"}
+	cfg.Roots = map[string]Root{"/home/you/src": {true}, "/home/you/src/archive/photos": {false}, "/home/you/.dotfiles": {true}}
+	cfg.Repos = map[string]RepoConfig{
+		"/home/you/src/archive/old-site": {Ignore: true},
+		"/home/you/src/work/api":         {CheckRemote: true, Pinned: true},
+		"/home/you/.dotfiles":            {Pinned: true},
+	}
 	for variant, th := range map[string]fyne.Theme{"dark": theme.DarkTheme(), "light": theme.LightTheme()} {
 		a := test.NewApp()
 		a.Settings().SetTheme(th)

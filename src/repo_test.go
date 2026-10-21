@@ -104,7 +104,9 @@ func TestScanAndOrder(t *testing.T) {
 	root, a, b := setup(t)
 	deep := filepath.Join(root, "x", "y", "z")
 	hidden := filepath.Join(root, ".hidden", "c")
-	for _, dir := range []string{deep, hidden} {
+	// A glob unless escaped, it would match w1
+	glob := filepath.Join(root, "w[1]")
+	for _, dir := range []string{deep, hidden, glob} {
 		run(t, root, "git", "init", "--quiet", dir)
 	}
 	old := time.Now().Add(-time.Hour)
@@ -112,20 +114,32 @@ func TestScanAndOrder(t *testing.T) {
 		_ = os.Chtimes(filepath.Join(r, ".git", "logs", "HEAD"), old, old)
 		_ = os.Chtimes(filepath.Join(r, ".git", "HEAD"), old, old)
 	}
-	for name, scan := range map[string]func(context.Context, string, int) ([]Repo, error){"Scan": Scan, "walkScan": walkScan} {
-		for depth, want := range map[int]int{2: 2, 3: 3} {
-			repos, err := scan(context.Background(), root, depth)
+	excluded := []string{filepath.Join(root, "x"), glob}
+	for name, scan := range map[string]func(context.Context, string, int, []string) ([]Repo, error){"Scan": Scan, "walkScan": walkScan} {
+		for _, c := range []struct {
+			depth    int
+			excluded []string
+			want     int
+		}{{2, nil, 3}, {3, nil, 4}, {3, excluded, 2}} {
+			repos, err := scan(context.Background(), root, c.depth, c.excluded)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(repos) != want {
-				t.Fatalf("%s at depth %d found %v, want %d", name, depth, repos, want)
+			if len(repos) != c.want {
+				t.Fatalf("%s at depth %d excluding %v found %v, want %d", name, c.depth, c.excluded, repos, c.want)
 			}
 		}
 	}
-	repos, _ := Scan(context.Background(), root, 3)
-	if top := MostActive(repos, 2); len(top) != 2 || top[0].Path != b {
-		t.Fatalf("MostActive returned %v, want b first", top)
+	repos, _ := Scan(context.Background(), root, 3, nil)
+	if top := MostActive(repos, 2, func(string) bool { return false }); len(top) != 2 || top[0].Path == a || top[0].Path == deep {
+		t.Fatalf("MostActive returned %v, want a recent repo first", top)
+	}
+	// Pins come first, the most recently active win when they don't all fit
+	if top := MostActive(repos, 2, func(p string) bool { return p == a }); len(top) != 2 || top[0].Path != a {
+		t.Fatalf("MostActive returned %v, want pinned a first", top)
+	}
+	if top := MostActive(repos, 1, func(p string) bool { return p == a || p == b }); len(top) != 1 || top[0].Path != b {
+		t.Fatalf("MostActive returned %v, want pinned b", top)
 	}
 }
 
@@ -178,7 +192,7 @@ func TestFindRepos(t *testing.T) {
 	root, a, _ := setup(t)
 	nested := filepath.Join(a, "sub", "nested")
 	run(t, a, "git", "init", "--quiet", nested)
-	repos := FindRepos([]string{a, root}, 3, time.Minute)
+	repos := FindRepos([]string{a, root}, nil, 3, time.Minute)
 	var paths []string
 	for _, r := range repos {
 		paths = append(paths, r.Path)

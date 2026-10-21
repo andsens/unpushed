@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	fyne.io/fyne/v2 v2.8.2
+	github.com/docopt/docopt-go v0.0.0-20180111231733-ee0de3bc6815
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/rymdport/portal v0.4.3-0.20260923164458-f5459091ff06
 )

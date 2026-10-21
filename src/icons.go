@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/theme"
 )
 
 // Look is everything an icon shows. Repo.Look decides it, Color and svg turn
@@ -80,3 +81,7 @@ func icon(l Look) fyne.Resource {
 
 // appIcon is the app's own: both arrows on green, outside the scheme.
 var appIcon = fyne.NewStaticResource("unpushed.svg", Look{Up: true, Down: true}.svg(green))
+
+// pinIcon is a push pin, recoloured by the theme like its own icons.
+var pinIcon = theme.NewThemedResource(fyne.NewStaticResource("pin.svg", []byte(
+	`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M8 3h8v2h-1v6l3 3v2h-5.25v6h-1.5v-6H6v-2l3-3V5H8z"/></svg>`)))

@@ -13,13 +13,17 @@ import (
 )
 
 // Scan finds repositories (directories with a .git directory) at most depth
-// levels below root, skipping hidden directories. find runs at idle priority,
-// a home directory is a lot of inodes.
-func Scan(ctx context.Context, root string, depth int) ([]Repo, error) {
-	cmd := exec.CommandContext(ctx, "nice", "-n19", "ionice", "-c3",
-		"find", root, "-mindepth", "1", "-maxdepth", strconv.Itoa(depth+1),
-		"(", "-name", ".*", "!", "-name", ".git", ")", "-prune",
+// levels below root, skipping hidden and excluded directories. find runs at
+// idle priority, a home directory is a lot of inodes.
+func Scan(ctx context.Context, root string, depth int, excluded []string) ([]Repo, error) {
+	args := []string{"-n19", "ionice", "-c3", "find", root, "-mindepth", "1", "-maxdepth", strconv.Itoa(depth + 1)}
+	for _, path := range excluded {
+		// -path takes a glob
+		args = append(args, "-path", globEscape.Replace(path), "-prune", "-o")
+	}
+	args = append(args, "(", "-name", ".*", "!", "-name", ".git", ")", "-prune",
 		"-o", "-name", ".git", "-type", "d", "-print", "-prune")
+	cmd := exec.CommandContext(ctx, "nice", args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -38,3 +42,5 @@ func Scan(ctx context.Context, root string, depth int) ([]Repo, error) {
 	}
 	return repos, nil
 }
+
+var globEscape = strings.NewReplacer(`\`, `\\`, "*", `\*`, "?", `\?`, "[", `\[`)

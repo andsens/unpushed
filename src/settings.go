@@ -2,6 +2,8 @@ package main
 
 import (
 	"image/color"
+	"maps"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -43,10 +45,8 @@ func (t *tray) showSettings() {
 		t.settings.Resize(fyne.NewSize(680, 860))
 	}
 	t.mu.Lock()
-	d := t.cfg
-	for _, paths := range d.paths() {
-		*paths = slices.Clone(*paths)
-	}
+	d, lower := t.cfg, t.lower
+	d.Roots, d.Repos = maps.Clone(d.Roots), maps.Clone(d.Repos)
 	found := slices.Clone(t.found)
 	t.mu.Unlock()
 
@@ -55,38 +55,50 @@ func (t *tray) showSettings() {
 	scanEvery := intervalSlider(&d.ScanInterval)
 	remoteEvery := intervalSlider(&d.RemoteInterval)
 
-	roots := container.NewVBox()
-	addRoot := widget.NewButton("Add root…", nil)
-	var buildRoots func()
-	buildRoots = func() {
-		roots.RemoveAll()
-		for _, path := range d.Roots {
-			remove := widget.NewButton("Remove", func() {
-				d.Roots = slices.DeleteFunc(d.Roots, func(p string) bool { return p == path })
-				buildRoots()
-			})
-			roots.Add(container.NewBorder(nil, nil, nil, remove, widget.NewLabel(tilde(path))))
-		}
-		if len(roots.Objects) == 0 {
-			roots.Add(widget.NewLabel("No roots, nothing is searched."))
-		}
-	}
-	addRoot.OnTapped = func() {
-		t.pickDirs("Add root", func(path string) {
-			if !slices.Contains(d.Roots, path) {
-				d.Roots = append(d.Roots, path)
+	// The eye is lit while a root is searched
+	rootsTable, refreshRoots := pathTable(func() []string { return slices.Collect(maps.Keys(d.Roots)) }, []column{
+		{"Include", theme.VisibilityIcon(), func(p string) bool { return d.Roots[p].Include }, func(p string) {
+			d.Roots[p] = Root{Include: !d.Roots[p].Include}
+		}},
+		{"Remove", theme.DeleteIcon(), func(string) bool { return true }, func(p string) {
+			// The user's config can't remove a root from the base config,
+			// only exclude it
+			if _, ok := lower.Roots[p]; ok {
+				d.Roots[p] = Root{}
+			} else {
+				delete(d.Roots, p)
 			}
-		}, buildRoots)
+		}},
+	})
+	addRoot := widget.NewButton("Add root…", func() {
+		t.pickDirs("Add root", func(path string) { d.Roots[filepath.Clean(path)] = Root{Include: true} }, refreshRoots)
+	})
+
+	// The eye is lit while the repo is included, the others while their
+	// setting is on
+	repo := func(p string, set func(*RepoConfig)) {
+		r := d.Repos[p]
+		set(&r)
+		d.Repos[p] = r
 	}
-	buildRoots()
+	reposTable, _ := pathTable(func() []string { return found }, []column{
+		{"Include", theme.VisibilityIcon(), func(p string) bool { return !d.Repos[p].Ignore }, func(p string) {
+			repo(p, func(r *RepoConfig) { r.Ignore = !r.Ignore })
+		}},
+		{"Refresh", theme.ViewRefreshIcon(), func(p string) bool { return d.Repos[p].CheckRemote }, func(p string) {
+			repo(p, func(r *RepoConfig) { r.CheckRemote = !r.CheckRemote })
+		}},
+		{"Pin", pinIcon, func(p string) bool { return d.Repos[p].Pinned }, func(p string) {
+			repo(p, func(r *RepoConfig) { r.Pinned = !r.Pinned })
+		}},
+	})
 
-	reposTable := t.reposTable(found, &d)
-
-	rootsList := container.NewVScroll(roots)
-	rootsList.SetMinSize(fyne.NewSize(0, 110))
+	// Room for a few roots, the repos table takes the rest
+	rootsHeight := canvas.NewRectangle(color.Transparent)
+	rootsHeight.SetMinSize(fyne.NewSize(0, 170))
 	search := group("Scanning", container.NewVBox(
 		container.NewBorder(nil, nil, widget.NewLabel("Scanning roots and repos"), addRoot),
-		sunken(rootsList),
+		sunken(container.NewStack(rootsHeight, rootsTable)),
 		widget.NewForm(
 			widget.NewFormItem("Scanning directory depth", depth),
 			widget.NewFormItem("Scanning interval", scanEvery),
@@ -134,36 +146,28 @@ func group(title string, content fyne.CanvasObject) fyne.CanvasObject {
 	)
 }
 
-// reposTable lists the found repositories with a toggle each for ignoring
-// them and checking their remote. Clicking a header sorts by that column.
-func (t *tray) reposTable(found []string, d *Config) fyne.CanvasObject {
-	headers := []string{"Path", "Include", "Refresh"}
-	icons := []fyne.Resource{nil, theme.VisibilityIcon(), theme.ViewRefreshIcon()}
-	// Whether a column's toggle is on for path; the eye is lit while the repo
-	// is included, the refresh icon while its remote is checked
-	on := func(col int, path string) bool {
-		if col == 1 {
-			return !slices.Contains(d.Ignore, path)
-		}
-		return slices.Contains(d.CheckRemote, path)
+// column is a toggle in a pathTable: its icon is lit while on.
+type column struct {
+	header string
+	icon   fyne.Resource
+	on     func(path string) bool
+	flip   func(path string)
+}
+
+// pathTable lists paths with a toggle per column, and refresh rereads them.
+// Clicking a header sorts by that column.
+func pathTable(rows func() []string, cols []column) (fyne.CanvasObject, func()) {
+	headers := []string{"Path"}
+	for _, c := range cols {
+		headers = append(headers, c.header)
 	}
-	flip := func(col int, path string) {
-		list := &d.CheckRemote
-		if col == 1 {
-			list = &d.Ignore
-		}
-		if slices.Contains(*list, path) {
-			*list = slices.DeleteFunc(*list, func(p string) bool { return p == path })
-		} else {
-			*list = append(*list, path)
-		}
-	}
+	paths := rows()
 	sortCol, descending := 0, false
 	sortRows := func() {
-		slices.SortFunc(found, func(a, b string) int {
+		slices.SortFunc(paths, func(a, b string) int {
 			c := 0
-			if sortCol > 0 && on(sortCol, a) != on(sortCol, b) {
-				c = map[bool]int{true: -1, false: 1}[on(sortCol, a)]
+			if on := cols[max(sortCol-1, 0)].on; sortCol > 0 && on(a) != on(b) {
+				c = map[bool]int{true: -1, false: 1}[on(a)]
 			}
 			if c == 0 {
 				c = strings.Compare(a, b)
@@ -177,8 +181,13 @@ func (t *tray) reposTable(found []string, d *Config) fyne.CanvasObject {
 	sortRows()
 
 	var table *widget.Table
+	refresh := func() {
+		paths = rows()
+		sortRows()
+		table.Refresh()
+	}
 	table = widget.NewTableWithHeaders(
-		func() (int, int) { return len(found), len(headers) },
+		func() (int, int) { return len(paths), len(headers) },
 		func() fyne.CanvasObject {
 			b := widget.NewButtonWithIcon("", nil, nil)
 			b.Importance = widget.LowImportance
@@ -188,7 +197,7 @@ func (t *tray) reposTable(found []string, d *Config) fyne.CanvasObject {
 		},
 		func(id widget.TableCellID, o fyne.CanvasObject) {
 			l, b := o.(*fyne.Container).Objects[0].(*widget.Label), o.(*fyne.Container).Objects[1].(*widget.Button)
-			path := found[id.Row]
+			path := paths[id.Row]
 			if id.Col == 0 {
 				l.SetText(tilde(path))
 				l.Show()
@@ -197,14 +206,20 @@ func (t *tray) reposTable(found []string, d *Config) fyne.CanvasObject {
 			}
 			l.Hide()
 			b.Show()
-			if on(id.Col, path) {
-				b.SetIcon(icons[id.Col])
+			c := cols[id.Col-1]
+			if c.on(path) {
+				b.SetIcon(c.icon)
 			} else {
-				b.SetIcon(theme.NewDisabledResource(icons[id.Col]))
+				b.SetIcon(theme.NewDisabledResource(c.icon))
 			}
 			b.OnTapped = func() {
-				flip(id.Col, path)
-				table.RefreshItem(id)
+				c.flip(path)
+				// Rows stay put under the pointer, unless one went
+				if len(rows()) != len(paths) {
+					refresh()
+				} else {
+					table.RefreshItem(id)
+				}
 			}
 		},
 	)
@@ -230,22 +245,25 @@ func (t *tray) reposTable(found []string, d *Config) fyne.CanvasObject {
 		}
 	}
 	// The path takes what the toggle columns leave
-	const toggleWidth = 100
-	table.SetColumnWidth(1, toggleWidth)
-	table.SetColumnWidth(2, toggleWidth)
-	return container.New(&stretchFirst{table, 2 * toggleWidth}, table)
+	const toggleWidth = 90
+	for i := range cols {
+		table.SetColumnWidth(i+1, toggleWidth)
+	}
+	return container.New(&stretchFirst{table, len(cols), toggleWidth}, table), refresh
 }
 
 // stretchFirst sizes a table's first column to the width its other columns
 // leave, which Table doesn't do on its own.
 type stretchFirst struct {
 	table *widget.Table
-	rest  float32
+	cols  int     // the other columns
+	width float32 // of each other column
 }
 
 func (s *stretchFirst) Layout(objects []fyne.CanvasObject, size fyne.Size) {
-	// Less the separators between the columns and the scroller's padding
-	s.table.SetColumnWidth(0, max(size.Width-s.rest-2*theme.SeparatorThicknessSize()-2*theme.Padding(), 100))
+	// Table spaces its columns by the padding
+	rest := float32(s.cols) * (s.width + theme.Padding())
+	s.table.SetColumnWidth(0, max(size.Width-rest, 100))
 	objects[0].Resize(size)
 }
 

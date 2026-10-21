@@ -7,7 +7,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -15,8 +14,18 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/driver/desktop"
+	"github.com/docopt/docopt-go"
 	"github.com/fsnotify/fsnotify"
 )
+
+const usage = `unpushed - Tray icon for unpushed and unpulled commits
+Usage:
+  unpushed [--config PATH]
+
+Options:
+  --config PATH  Base config, read-only. The user's config applies on top
+                 and is the one the settings window writes.
+`
 
 const (
 	refreshDelay = 500 * time.Millisecond
@@ -31,8 +40,10 @@ type tray struct {
 	refresh  *time.Timer
 	reconfig chan struct{} // the config changed, rescan
 	work     sync.Mutex    // serializes git runs
+	base     string        // the base config's path
 	mu       sync.Mutex    // guards the fields below
 	cfg      Config
+	lower    Config // cfg without the user's config
 	found    []string // what the last scan found, ignored repos included
 	repos    map[string]*Repo
 	shown    []Repo
@@ -41,7 +52,18 @@ type tray struct {
 }
 
 func main() {
-	cfg, err := loadConfig()
+	var params struct {
+		Config string `docopt:"--config"`
+	}
+	opts, err := docopt.ParseDoc(usage)
+	if err == nil {
+		err = opts.Bind(&params)
+	}
+	if err != nil {
+		slog.Error(err.Error())
+		os.Exit(1)
+	}
+	cfg, lower, err := loadConfig(params.Config)
 	if err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
@@ -58,7 +80,7 @@ func main() {
 		os.Exit(1)
 	}
 	t := &tray{
-		app: a, desk: desk, watcher: w, reconfig: make(chan struct{}, 1), cfg: cfg,
+		app: a, desk: desk, watcher: w, reconfig: make(chan struct{}, 1), base: params.Config, cfg: cfg, lower: lower,
 		repos: map[string]*Repo{}, failed: map[string]bool{}, dirty: map[string]bool{},
 	}
 	// Set before Run, render's updates go through fyne.Do once it runs
@@ -117,12 +139,13 @@ func (t *tray) scan() {
 	t.mu.Lock()
 	cfg := t.cfg
 	t.mu.Unlock()
-	found := FindRepos(cfg.Roots, cfg.Depth, cfg.ScanInterval.Duration)
+	included, excluded := cfg.included()
+	found := FindRepos(included, excluded, cfg.Depth, cfg.ScanInterval.Duration)
 	var paths []string
 	var listed []Repo
 	for _, r := range found {
 		paths = append(paths, r.Path)
-		if !slices.Contains(cfg.Ignore, r.Path) {
+		if !cfg.Repos[r.Path].Ignore {
 			listed = append(listed, r)
 		}
 	}
@@ -143,18 +166,18 @@ func (t *tray) scan() {
 	t.refreshDirty()
 }
 
-// lsRemotes queries the remotes of the repos in checkRemote.
+// lsRemotes queries the remotes of the repos set to checkRemote.
 func (t *tray) lsRemotes() {
 	t.mu.Lock()
 	var paths []string
-	for _, path := range t.cfg.CheckRemote {
-		if _, ok := t.repos[path]; ok {
+	for path, r := range t.cfg.Repos {
+		if _, ok := t.repos[path]; ok && r.CheckRemote {
 			paths = append(paths, path)
 		}
 	}
 	// Repos taken out of checkRemote stop counting what the remote has
 	for path, r := range t.repos {
-		if r.RemoteHeads != nil && !slices.Contains(t.cfg.CheckRemote, path) {
+		if r.RemoteHeads != nil && !t.cfg.Repos[path].CheckRemote {
 			r.RemoteHeads = nil
 			t.dirty[path] = true
 		}
@@ -222,7 +245,7 @@ func (t *tray) render() {
 			tray = tray.Union(t.look(*r))
 		}
 	}
-	t.shown = MostActive(all, t.cfg.Max)
+	t.shown = MostActive(all, t.cfg.Max, func(path string) bool { return t.cfg.Repos[path].Pinned })
 	var items []*fyne.MenuItem
 	for i, r := range t.shown {
 		title := r.Name
@@ -313,15 +336,18 @@ func (t *tray) click(i int) {
 
 // applyConfig saves cfg and rescans with it.
 func (t *tray) applyConfig(cfg Config) error {
-	if err := saveConfig(cfg); err != nil {
+	t.mu.Lock()
+	lower := t.lower
+	t.mu.Unlock()
+	if err := saveConfig(cfg, lower); err != nil {
 		return err
 	}
-	loaded, err := loadConfig()
+	loaded, lower, err := loadConfig(t.base)
 	if err != nil {
 		return err
 	}
 	t.mu.Lock()
-	t.cfg = loaded
+	t.cfg, t.lower = loaded, lower
 	t.mu.Unlock()
 	select {
 	case t.reconfig <- struct{}{}:
