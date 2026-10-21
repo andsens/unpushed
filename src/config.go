@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -15,7 +15,7 @@ import (
 type Config struct {
 	// Roots are searched for repositories, unless excluded. An excluded
 	// directory below an included root is left out of the search.
-	Roots          map[string]Root `json:"roots"`
+	Roots          map[string]Root       `json:"roots"`
 	Repos          map[string]RepoConfig `json:"repos"`
 	Depth          int                   `json:"depth"`
 	Max            int                   `json:"max"`

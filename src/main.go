@@ -43,7 +43,7 @@ type tray struct {
 	base     string        // the base config's path
 	mu       sync.Mutex    // guards the fields below
 	cfg      Config
-	lower    Config // cfg without the user's config
+	lower    Config   // cfg without the user's config
 	found    []string // what the last scan found, ignored repos included
 	repos    map[string]*Repo
 	shown    []Repo
