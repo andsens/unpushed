@@ -10,7 +10,7 @@ import (
 )
 
 // walkScan is Scan without find: it walks the tree itself.
-func walkScan(ctx context.Context, root string, depth int, excluded []string) ([]Repo, error) {
+func walkScan(ctx context.Context, root string, depth int, pruned []string) ([]Repo, error) {
 	var repos []Repo
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if ctx.Err() != nil {
@@ -20,7 +20,7 @@ func walkScan(ctx context.Context, root string, depth int, excluded []string) ([
 			// Unreadable directories are skipped, as find does
 			return nil
 		}
-		if slices.Contains(excluded, path) {
+		if slices.Contains(pruned, path) {
 			return fs.SkipDir
 		}
 		if d.Name() == ".git" {

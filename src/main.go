@@ -20,11 +20,12 @@ import (
 
 const usage = `unpushed - Tray icon for unpushed and unpulled commits
 Usage:
-  unpushed [--config PATH]
+  unpushed [--ro-config PATH] [--config PATH]
 
 Options:
-  --config PATH  Base config, read-only. The user's config applies on top
-                 and is the one the settings window writes.
+  --ro-config PATH  Base config, read-only. The user's config applies on top.
+  --config PATH     The user's config, which the settings window writes
+                    [default: the config directory's unpushed.json]
 `
 
 const (
@@ -41,6 +42,7 @@ type tray struct {
 	reconfig chan struct{} // the config changed, rescan
 	work     sync.Mutex    // serializes git runs
 	base     string        // the base config's path
+	user     string        // the user's config's path
 	mu       sync.Mutex    // guards the fields below
 	cfg      Config
 	lower    Config   // cfg without the user's config
@@ -53,7 +55,8 @@ type tray struct {
 
 func main() {
 	var params struct {
-		Config string `docopt:"--config"`
+		ROConfig string `docopt:"--ro-config"`
+		Config   string `docopt:"--config"`
 	}
 	opts, err := docopt.ParseDoc(usage)
 	if err == nil {
@@ -63,7 +66,14 @@ func main() {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}
-	cfg, lower, err := loadConfig(params.Config)
+	if params.Config == "the config directory's unpushed.json" {
+		params.Config, err = userConfigPath()
+	}
+	if err != nil {
+		slog.Error(err.Error())
+		os.Exit(1)
+	}
+	cfg, lower, err := loadConfig(params.ROConfig, params.Config)
 	if err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
@@ -80,7 +90,7 @@ func main() {
 		os.Exit(1)
 	}
 	t := &tray{
-		app: a, desk: desk, watcher: w, reconfig: make(chan struct{}, 1), base: params.Config, cfg: cfg, lower: lower,
+		app: a, desk: desk, watcher: w, reconfig: make(chan struct{}, 1), base: params.ROConfig, user: params.Config, cfg: cfg, lower: lower,
 		repos: map[string]*Repo{}, failed: map[string]bool{}, dirty: map[string]bool{},
 	}
 	// Set before Run, render's updates go through fyne.Do once it runs
@@ -139,8 +149,8 @@ func (t *tray) scan() {
 	t.mu.Lock()
 	cfg := t.cfg
 	t.mu.Unlock()
-	included, excluded := cfg.included()
-	found := FindRepos(included, excluded, cfg.Depth, cfg.ScanInterval.Duration)
+	roots, pruned := cfg.searched()
+	found := FindRepos(roots, pruned, cfg.Depth, cfg.ScanInterval.Duration)
 	var paths []string
 	var listed []Repo
 	for _, r := range found {
@@ -339,10 +349,10 @@ func (t *tray) applyConfig(cfg Config) error {
 	t.mu.Lock()
 	lower := t.lower
 	t.mu.Unlock()
-	if err := saveConfig(cfg, lower); err != nil {
+	if err := saveConfig(t.user, cfg, lower); err != nil {
 		return err
 	}
-	loaded, lower, err := loadConfig(t.base)
+	loaded, lower, err := loadConfig(t.base, t.user)
 	if err != nil {
 		return err
 	}

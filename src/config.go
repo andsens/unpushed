@@ -86,7 +86,7 @@ func defaultRoots() map[string]Root {
 }
 
 // userConfigPath is the config the settings window writes, on top of the
-// base config given with --config.
+// base config given with --ro-config, unless --config names another.
 func userConfigPath() (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
@@ -121,15 +121,25 @@ func readLayer(path string, optional bool) (map[string]any, error) {
 }
 
 // merge sets src's keys in dst. Objects merge key by key, so a layer can
-// override a single property of a repo.
+// override a single property of a repo, and null removes a key.
 func merge(dst, src map[string]any) {
 	for k, v := range src {
-		sub, ok := v.(map[string]any)
-		if into, ok2 := dst[k].(map[string]any); ok && ok2 {
-			merge(into, sub)
-		} else {
-			dst[k] = v
+		if v == nil {
+			delete(dst, k)
+			continue
 		}
+		sub, ok := v.(map[string]any)
+		if !ok {
+			dst[k] = v
+			continue
+		}
+		// Merged into a copy, later layers would change src's otherwise
+		into, ok := dst[k].(map[string]any)
+		if !ok {
+			into = map[string]any{}
+			dst[k] = into
+		}
+		merge(into, sub)
 	}
 }
 
@@ -144,7 +154,6 @@ func decode(layers ...map[string]any) (Config, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return cfg, fmt.Errorf("Unable to parse config: %w", err)
 	}
-	// "roots": null and the like
 	if cfg.Roots == nil {
 		cfg.Roots = map[string]Root{}
 	}
@@ -154,19 +163,15 @@ func decode(layers ...map[string]any) (Config, error) {
 	return cfg, nil
 }
 
-// loadConfig reads the base config at base, if any, with the user's config
-// on top. lower is the config without the user's, which saveConfig writes the
-// difference to.
-func loadConfig(base string) (cfg, lower Config, err error) {
+// loadConfig reads the base config at base, if any, with the user's config at
+// path on top. lower is the config without the user's, which saveConfig writes
+// the difference to.
+func loadConfig(base, path string) (cfg, lower Config, err error) {
 	var baseLayer map[string]any
 	if base != "" {
 		if baseLayer, err = readLayer(base, false); err != nil {
 			return cfg, lower, err
 		}
-	}
-	path, err := userConfigPath()
-	if err != nil {
-		return cfg, lower, err
 	}
 	user, err := readLayer(path, true)
 	if err != nil {
@@ -194,28 +199,25 @@ func (cfg Config) validate() error {
 	return nil
 }
 
-// included are the roots to search, excluded the directories to leave out.
-func (cfg Config) included() (included, excluded []string) {
+// searched are the roots to search. Each search prunes the roots below its
+// own, so the most specific one decides.
+func (cfg Config) searched() (searched, pruned []string) {
 	for path, r := range cfg.Roots {
 		if r.Include {
-			included = append(included, path)
-		} else {
-			excluded = append(excluded, path)
+			searched = append(searched, path)
 		}
+		pruned = append(pruned, path)
 	}
-	slices.Sort(included)
-	return included, excluded
+	slices.Sort(searched)
+	return searched, pruned
 }
 
-// saveConfig writes what cfg changes over lower to the user's config, so a
-// changed default or base config still applies where the user didn't
-// override it. Keys it doesn't know are kept, though json reorders them.
-func saveConfig(cfg, lower Config) error {
+// saveConfig writes what cfg changes over lower to the user's config at
+// path, so a changed default or base config still applies where the user
+// didn't override it. Keys it doesn't know are kept, though json reorders
+// them.
+func saveConfig(path string, cfg, lower Config) error {
 	if err := cfg.validate(); err != nil {
-		return err
-	}
-	path, err := userConfigPath()
-	if err != nil {
 		return err
 	}
 	raw := map[string]any{}
@@ -233,12 +235,17 @@ func saveConfig(cfg, lower Config) error {
 			delete(raw, key)
 		}
 	}
-	roots := map[string]Root{}
+	roots := map[string]any{}
 	// Left as they came from defaultRoots, they stay unwritten
 	if len(lower.Roots) > 0 || !maps.Equal(cfg.Roots, defaultRoots()) {
 		for path, r := range cfg.Roots {
 			if l, ok := lower.Roots[path]; !ok || l != r {
 				roots[tilde(path)] = r
+			}
+		}
+		for path := range lower.Roots {
+			if _, ok := cfg.Roots[path]; !ok {
+				roots[tilde(path)] = nil
 			}
 		}
 	}

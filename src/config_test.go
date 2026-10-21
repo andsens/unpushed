@@ -52,42 +52,43 @@ func tl(rel string) string { return "~" + string(filepath.Separator) + filepath.
 func TestLayers(t *testing.T) {
 	home, file := configHome(t)
 	base := filepath.Join(home, "base.json")
-	writeJSON(t, base, `{"roots": {"~/src": {"include": true}}, "repos": {"~/src/x": {"ignore": true, "checkRemote": true}}, "depth": 3}`)
+	writeJSON(t, base, `{"roots": {"~/src": {"include": true}, "~/old": {"include": false}}, "repos": {"~/src/x": {"ignore": true, "checkRemote": true}}, "depth": 3}`)
 	writeJSON(t, file, `{"unknown": 1, "repos": {"~/src/x": {"ignore": false}}, "scanInterval": "1h"}`)
 	src, x, y := filepath.Join(home, "src"), filepath.Join(home, "src", "x"), filepath.Join(home, "src", "y")
 
-	cfg, lower, err := loadConfig(base)
+	cfg, lower, err := loadConfig(base, file)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The user's config overrides a single property, the default ~ doesn't apply
-	if !reflect.DeepEqual(cfg.Roots, map[string]Root{src: {true}}) || cfg.Repos[x] != (RepoConfig{CheckRemote: true}) ||
+	if !reflect.DeepEqual(cfg.Roots, map[string]Root{src: {true}, filepath.Join(home, "old"): {}}) || cfg.Repos[x] != (RepoConfig{CheckRemote: true}) ||
 		cfg.Depth != 3 || cfg.Max != 5 || cfg.ScanInterval.Duration != time.Hour {
 		t.Fatalf("Loaded %+v", cfg)
 	}
 
-	// Removing a base root excludes it, the user's own root and repo
+	// Removing a base root writes null, the user's own root and repo
 	// settings are written, as is a depth back at the built-in default but
 	// not the base's. x goes back to the base's settings, so it's left out.
+	delete(cfg.Roots, filepath.Join(home, "old"))
 	cfg.Roots[src] = Root{}
 	cfg.Roots[filepath.Join(home, "work")] = Root{true}
 	cfg.Repos[x] = RepoConfig{Ignore: true, CheckRemote: true}
 	cfg.Repos[y] = RepoConfig{Pinned: true}
 	cfg.Depth = 5
 	cfg.ScanInterval = Duration{5 * time.Minute}
-	if err := saveConfig(cfg, lower); err != nil {
+	if err := saveConfig(file, cfg, lower); err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]any{
 		"unknown": 1.0,
-		"roots":   map[string]any{tl("src"): map[string]any{"include": false}, tl("work"): map[string]any{"include": true}},
+		"roots":   map[string]any{tl("src"): map[string]any{"include": false}, tl("old"): nil, tl("work"): map[string]any{"include": true}},
 		"repos":   map[string]any{tl("src/y"): map[string]any{"pinned": true}},
 		"depth":   5.0,
 	}
 	if raw := readJSON(t, file); !reflect.DeepEqual(raw, want) {
 		t.Fatalf("Saved %v", raw)
 	}
-	loaded, _, err := loadConfig(base)
+	loaded, _, err := loadConfig(base, file)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,22 +96,32 @@ func TestLayers(t *testing.T) {
 		t.Fatalf("Loaded %+v, saved %+v", loaded, cfg)
 	}
 
+	// Added back as the base has it, the root is the base's again
+	cfg.Roots[filepath.Join(home, "old")] = Root{}
+	cfg.Roots[src] = Root{true}
+	if err := saveConfig(file, cfg, lower); err != nil {
+		t.Fatal(err)
+	}
+	if raw := readJSON(t, file); !reflect.DeepEqual(raw["roots"], map[string]any{tl("work"): map[string]any{"include": true}}) {
+		t.Fatalf("Saved %v", raw)
+	}
+
 	cfg.Roots = map[string]Root{src: {}}
-	if err := saveConfig(cfg, lower); err == nil {
+	if err := saveConfig(file, cfg, lower); err == nil {
 		t.Fatal("Saved a config without included roots")
 	}
 }
 
 func TestDefaultRoots(t *testing.T) {
 	home, file := configHome(t)
-	cfg, lower, err := loadConfig("")
+	cfg, lower, err := loadConfig("", file)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(cfg.Roots, map[string]Root{home: {true}}) {
 		t.Fatalf("Default roots %v", cfg.Roots)
 	}
-	if err := saveConfig(cfg, lower); err != nil {
+	if err := saveConfig(file, cfg, lower); err != nil {
 		t.Fatal(err)
 	}
 	if raw := readJSON(t, file); len(raw) != 0 {
@@ -118,7 +129,7 @@ func TestDefaultRoots(t *testing.T) {
 	}
 	// With a root added, ~ has to be written too, or it'd be gone
 	cfg.Roots[filepath.Join(home, "src")] = Root{true}
-	if err := saveConfig(cfg, lower); err != nil {
+	if err := saveConfig(file, cfg, lower); err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]any{"~": map[string]any{"include": true}, tl("src"): map[string]any{"include": true}}

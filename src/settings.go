@@ -42,10 +42,10 @@ func (t *tray) showSettings() {
 		t.settings = t.app.NewWindow("unpushed settings")
 		t.settings.SetCloseIntercept(t.settings.Hide)
 		t.settings.SetIcon(appIcon)
-		t.settings.Resize(fyne.NewSize(680, 860))
+		t.settings.Resize(fyne.NewSize(680, 960))
 	}
 	t.mu.Lock()
-	d, lower := t.cfg, t.lower
+	d := t.cfg
 	d.Roots, d.Repos = maps.Clone(d.Roots), maps.Clone(d.Repos)
 	found := slices.Clone(t.found)
 	t.mu.Unlock()
@@ -55,24 +55,35 @@ func (t *tray) showSettings() {
 	scanEvery := intervalSlider(&d.ScanInterval)
 	remoteEvery := intervalSlider(&d.RemoteInterval)
 
-	// The eye is lit while a root is searched
-	rootsTable, refreshRoots := pathTable(func() []string { return slices.Collect(maps.Keys(d.Roots)) }, []column{
-		{"Include", theme.VisibilityIcon(), func(p string) bool { return d.Roots[p].Include }, func(p string) {
-			d.Roots[p] = Root{Include: !d.Roots[p].Include}
-		}},
-		{"Remove", theme.DeleteIcon(), func(string) bool { return true }, func(p string) {
-			// The user's config can't remove a root from the base config,
-			// only exclude it
-			if _, ok := lower.Roots[p]; ok {
-				d.Roots[p] = Root{}
-			} else {
-				delete(d.Roots, p)
+	// Each table lists the roots with include at its value. The trash removes
+	// a root whichever config set it, saveConfig writes null for the base's.
+	var refreshRoots []func()
+	roots := func(include bool) (fyne.CanvasObject, fyne.CanvasObject) {
+		table, refresh := pathTable(func() []string {
+			var paths []string
+			for path, r := range d.Roots {
+				if r.Include == include {
+					paths = append(paths, path)
+				}
 			}
-		}},
-	})
-	addRoot := widget.NewButton("Add root…", func() {
-		t.pickDirs("Add root", func(path string) { d.Roots[filepath.Clean(path)] = Root{Include: true} }, refreshRoots)
-	})
+			return paths
+		}, []column{{"Remove", theme.DeleteIcon(), func(string) bool { return true }, func(p string) { delete(d.Roots, p) }}})
+		refreshRoots = append(refreshRoots, refresh)
+		title := map[bool]string{true: "Add root…", false: "Add exclusion…"}[include]
+		add := widget.NewButton(title, func() {
+			t.pickDirs(strings.TrimSuffix(title, "…"), func(path string) { d.Roots[filepath.Clean(path)] = Root{Include: include} }, func() {
+				for _, refresh := range refreshRoots {
+					refresh()
+				}
+			})
+		})
+		// Room for a few roots, the repos table takes the rest
+		height := canvas.NewRectangle(color.Transparent)
+		height.SetMinSize(fyne.NewSize(0, 150))
+		return add, sunken(container.NewStack(height, table))
+	}
+	addRoot, includedTable := roots(true)
+	addExclusion, excludedTable := roots(false)
 
 	// The eye is lit while the repo is included, the others while their
 	// setting is on
@@ -93,12 +104,11 @@ func (t *tray) showSettings() {
 		}},
 	})
 
-	// Room for a few roots, the repos table takes the rest
-	rootsHeight := canvas.NewRectangle(color.Transparent)
-	rootsHeight.SetMinSize(fyne.NewSize(0, 170))
 	search := group("Scanning", container.NewVBox(
-		container.NewBorder(nil, nil, widget.NewLabel("Scanning roots and repos"), addRoot),
-		sunken(container.NewStack(rootsHeight, rootsTable)),
+		container.NewBorder(nil, nil, widget.NewLabel("Searched directories"), addRoot),
+		includedTable,
+		container.NewBorder(nil, nil, widget.NewLabel("Excluded directories"), addExclusion),
+		excludedTable,
 		widget.NewForm(
 			widget.NewFormItem("Scanning directory depth", depth),
 			widget.NewFormItem("Scanning interval", scanEvery),

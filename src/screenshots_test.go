@@ -45,7 +45,7 @@ func TestScreenshots(t *testing.T) {
 	// Example paths, shown with ~ for this home
 	t.Setenv("HOME", "/home/you")
 	cfg := defaultConfig()
-	cfg.Roots = map[string]Root{"/home/you/src": {true}, "/home/you/src/archive/photos": {false}, "/home/you/.dotfiles": {true}}
+	cfg.Roots = map[string]Root{"/home/you/src": {true}, "/home/you/src/archive": {false}, "/home/you/src/archive/notes": {true}, "/home/you/.dotfiles": {true}}
 	cfg.Repos = map[string]RepoConfig{
 		"/home/you/src/archive/old-site": {Ignore: true},
 		"/home/you/src/work/api":         {CheckRemote: true, Pinned: true},

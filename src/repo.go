@@ -47,8 +47,8 @@ type Repo struct {
 }
 
 // FindRepos searches each root, or takes it as it is when it's a repository.
-// The search leaves out the excluded directories.
-func FindRepos(roots, excluded []string, depth int, timeout time.Duration) []Repo {
+// The search leaves out the pruned directories below the root.
+func FindRepos(roots, pruned []string, depth int, timeout time.Duration) []Repo {
 	var found []Repo
 	for _, root := range roots {
 		// Searching would walk the whole working tree for nothing
@@ -57,7 +57,7 @@ func FindRepos(roots, excluded []string, depth int, timeout time.Duration) []Rep
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		repos, err := Scan(ctx, root, depth, excluded)
+		repos, err := Scan(ctx, root, depth, pruned)
 		cancel()
 		if err != nil {
 			slog.Error(err.Error())

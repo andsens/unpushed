@@ -33,7 +33,7 @@ in
           types.submodule {
             options.include = mkOption {
               type = types.bool;
-              description = "Whether to search the directory, or leave it out of the search below another root.";
+              description = "Whether to search the directory, or leave it out of the search. The most specific path wins.";
             };
           }
         );
@@ -78,7 +78,7 @@ in
       };
       Service = {
         # The settings window writes the user's config on top of this one
-        ExecStart = "${lib.getExe cfg.package} --config ${file}";
+        ExecStart = "${lib.getExe cfg.package} --ro-config ${file}";
         Restart = "on-failure";
       };
       Install.WantedBy = [ "graphical-session.target" ];

@@ -13,11 +13,11 @@ import (
 )
 
 // Scan finds repositories (directories with a .git directory) at most depth
-// levels below root, skipping hidden and excluded directories. find runs at
+// levels below root, skipping hidden and pruned directories. find runs at
 // idle priority, a home directory is a lot of inodes.
-func Scan(ctx context.Context, root string, depth int, excluded []string) ([]Repo, error) {
+func Scan(ctx context.Context, root string, depth int, pruned []string) ([]Repo, error) {
 	args := []string{"-n19", "ionice", "-c3", "find", root, "-mindepth", "1", "-maxdepth", strconv.Itoa(depth + 1)}
-	for _, path := range excluded {
+	for _, path := range pruned {
 		// -path takes a glob
 		args = append(args, "-path", globEscape.Replace(path), "-prune", "-o")
 	}
