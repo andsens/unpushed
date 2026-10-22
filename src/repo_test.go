@@ -131,15 +131,18 @@ func TestScanAndOrder(t *testing.T) {
 		}
 	}
 	repos, _ := Scan(context.Background(), root, 3, nil)
-	if top := MostActive(repos, 2, func(string) bool { return false }); len(top) != 2 || top[0].Path == a || top[0].Path == deep {
-		t.Fatalf("MostActive returned %v, want a recent repo first", top)
+	none := func(string) bool { return false }
+	synced := func(Repo) bool { return false }
+	if top := MenuRepos(repos, 2, none, synced); len(top) != 2 || top[0].Path == a || top[0].Path == deep {
+		t.Fatalf("MenuRepos returned %v, want a recent repo first", top)
 	}
-	// Pins come first, the most recently active win when they don't all fit
-	if top := MostActive(repos, 2, func(p string) bool { return p == a }); len(top) != 2 || top[0].Path != a {
-		t.Fatalf("MostActive returned %v, want pinned a first", top)
+	// Pins come first, then repos out of sync
+	if top := MenuRepos(repos, 2, func(p string) bool { return p == a }, func(r Repo) bool { return r.Path == deep }); len(top) != 2 || top[0].Path != a || top[1].Path != deep {
+		t.Fatalf("MenuRepos returned %v, want pinned a, then unsynced deep", top)
 	}
-	if top := MostActive(repos, 1, func(p string) bool { return p == a || p == b }); len(top) != 1 || top[0].Path != b {
-		t.Fatalf("MostActive returned %v, want pinned b", top)
+	// Pins that don't fit are listed too
+	if top := MenuRepos(repos, 1, func(p string) bool { return p == a || p == b }, synced); len(top) != 2 || top[0].Path != b {
+		t.Fatalf("MenuRepos returned %v, want pinned b, then a", top)
 	}
 }
 

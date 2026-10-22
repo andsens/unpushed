@@ -26,7 +26,7 @@ override it.
 | `roots`          | `{"~": {"include": true}}`  | Directories to search for repositories, see below      |
 | `repos`          | `{}`                        | Settings for single repositories, see below            |
 | `depth`          | `5`                         | How many levels below a root a repository may be       |
-| `max`            | `5`                         | How many repositories the menu lists                   |
+| `max`            | `5`                         | How many repositories the menu lists, pins aside       |
 | `scanInterval`   | `"5m"`                      | How often to search the roots                          |
 | `remoteInterval` | `"5m"`                      | How often to query the remotes set to `checkRemote`    |
 
@@ -45,7 +45,7 @@ To watch only a fixed set of repositories, make each of them a root.
 | ------------- | -------------------------------------------------------------------- |
 | `ignore`      | Leave the repository out, even when pinned                           |
 | `checkRemote` | Query the remotes for commits to pull                                |
-| `pinned`      | List it before the others. Pins count toward `max`, and when there are more of them, the most recently active win |
+| `pinned`      | List it before the others. Pins count toward `max`, but the menu lists all of them |
 
 Paths may start with `~`. Intervals are durations such as `"30m"` or
 `"1h30m"`; the settings window offers steps from one minute to six hours.

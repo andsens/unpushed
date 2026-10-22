@@ -54,7 +54,15 @@ func TestScreenshots(t *testing.T) {
 	for variant, th := range map[string]fyne.Theme{"dark": theme.DarkTheme(), "light": theme.LightTheme()} {
 		a := test.NewApp()
 		a.Settings().SetTheme(th)
-		tr := &tray{app: a, cfg: cfg, found: []string{
+		repo := func(path string, ahead, behind int) *Repo {
+			return &Repo{Path: path, HasRemote: true, Branch: &Branch{Upstream: "refs/remotes/origin/main", Ahead: ahead, Behind: behind}}
+		}
+		tr := &tray{app: a, cfg: cfg, failed: map[string]bool{"/home/you/src/work/frontend": true}, repos: map[string]*Repo{
+			"/home/you/.dotfiles":         repo("/home/you/.dotfiles", 0, 0),
+			"/home/you/src/homelab":       repo("/home/you/src/homelab", 2, 0),
+			"/home/you/src/work/api":      repo("/home/you/src/work/api", 0, 3),
+			"/home/you/src/work/frontend": repo("/home/you/src/work/frontend", 1, 0),
+		}, found: []string{
 			"/home/you/.dotfiles", "/home/you/src/archive/old-site", "/home/you/src/homelab",
 			"/home/you/src/work/api", "/home/you/src/work/frontend",
 		}}

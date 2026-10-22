@@ -9,9 +9,9 @@
 </p>
 
 The tray icon sums up every repository it finds. Its menu lists the ones you
-pinned, then the ones you worked in most recently, each with its own icon and
-the number of commits ahead and behind. Only the branch checked out in a repository's main worktree
-counts.
+pinned, then the ones with commits to push or pull, then the ones you worked
+in most recently, each with its own icon and the number of commits ahead and
+behind. Only the branch checked out in a repository's main worktree counts.
 
 | Icon | Meaning |
 | :-: | --- |

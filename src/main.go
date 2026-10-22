@@ -255,7 +255,8 @@ func (t *tray) render() {
 			tray = tray.Union(t.look(*r))
 		}
 	}
-	t.shown = MostActive(all, t.cfg.Max, func(path string) bool { return t.cfg.Repos[path].Pinned })
+	t.shown = MenuRepos(all, t.cfg.Max, func(path string) bool { return t.cfg.Repos[path].Pinned },
+		func(r Repo) bool { return t.look(r) != Look{} })
 	var items []*fyne.MenuItem
 	for i, r := range t.shown {
 		title := r.Name

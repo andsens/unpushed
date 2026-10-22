@@ -67,20 +67,34 @@ func FindRepos(roots, pruned []string, depth int, timeout time.Duration) []Repo 
 	return found
 }
 
-// MostActive sorts repos by last activity, pinned ones first, and keeps the
-// first max.
-func MostActive(repos []Repo, max int, pinned func(path string) bool) []Repo {
+// MenuRepos sorts repos into pinned ones, then ones out of sync, then the
+// rest, each by last activity, and keeps the first limit. Pins that don't fit
+// are kept too.
+func MenuRepos(repos []Repo, limit int, pinned func(path string) bool, unsynced func(Repo) bool) []Repo {
+	rank := func(r Repo) int {
+		switch {
+		case pinned(r.Path):
+			return 0
+		case unsynced(r):
+			return 1
+		}
+		return 2
+	}
+	pins := 0
 	for i := range repos {
 		repos[i].Active = activity(filepath.Join(repos[i].Path, ".git"))
+		if pinned(repos[i].Path) {
+			pins++
+		}
 	}
 	sort.SliceStable(repos, func(i, j int) bool {
-		if pi, pj := pinned(repos[i].Path), pinned(repos[j].Path); pi != pj {
-			return pi
+		if ri, rj := rank(repos[i]), rank(repos[j]); ri != rj {
+			return ri < rj
 		}
 		return repos[i].Active.After(repos[j].Active)
 	})
-	if len(repos) > max {
-		repos = repos[:max]
+	if n := max(limit, pins); len(repos) > n {
+		repos = repos[:n]
 	}
 	return repos
 }

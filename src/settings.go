@@ -48,10 +48,17 @@ func (t *tray) showSettings() {
 	d := t.cfg
 	d.Roots, d.Repos = maps.Clone(d.Roots), maps.Clone(d.Repos)
 	found := slices.Clone(t.found)
+	// What the menu shows for each repo it can list
+	looks := map[string]Look{}
+	for path, r := range t.repos {
+		if r.HasRemote {
+			looks[path] = t.look(*r)
+		}
+	}
 	t.mu.Unlock()
 
-	depth := numberSlider(&d.Depth)
-	max := numberSlider(&d.Max)
+	depth := numberSlider(&d.Depth, 10)
+	max := numberSlider(&d.Max, 30)
 	scanEvery := intervalSlider(&d.ScanInterval)
 	remoteEvery := intervalSlider(&d.RemoteInterval)
 
@@ -67,7 +74,7 @@ func (t *tray) showSettings() {
 				}
 			}
 			return paths
-		}, []column{{"Remove", theme.DeleteIcon(), func(string) bool { return true }, func(p string) { delete(d.Roots, p) }}})
+		}, []column{toggle("Remove", theme.DeleteIcon(), func(string) bool { return true }, func(p string) { delete(d.Roots, p) })})
 		refreshRoots = append(refreshRoots, refresh)
 		title := map[bool]string{true: "Add root…", false: "Add exclusion…"}[include]
 		add := widget.NewButton(title, func() {
@@ -93,15 +100,27 @@ func (t *tray) showSettings() {
 		d.Repos[p] = r
 	}
 	reposTable, _ := pathTable(func() []string { return found }, []column{
-		{"Include", theme.VisibilityIcon(), func(p string) bool { return !d.Repos[p].Ignore }, func(p string) {
+		{"Status", func(p string) fyne.Resource {
+			if l, ok := looks[p]; ok {
+				return icon(l)
+			}
+			return nil
+		}, func(p string) int {
+			// Red, yellow, green, then the ones without a status
+			if l, ok := looks[p]; ok {
+				return map[color.NRGBA]int{red: 0, yellow: 1, green: 2}[l.Color()]
+			}
+			return 3
+		}, nil},
+		toggle("Include", theme.VisibilityIcon(), func(p string) bool { return !d.Repos[p].Ignore }, func(p string) {
 			repo(p, func(r *RepoConfig) { r.Ignore = !r.Ignore })
-		}},
-		{"Refresh", theme.ViewRefreshIcon(), func(p string) bool { return d.Repos[p].CheckRemote }, func(p string) {
+		}),
+		toggle("Refresh", theme.ViewRefreshIcon(), func(p string) bool { return d.Repos[p].CheckRemote }, func(p string) {
 			repo(p, func(r *RepoConfig) { r.CheckRemote = !r.CheckRemote })
-		}},
-		{"Pin", pinIcon, func(p string) bool { return d.Repos[p].Pinned }, func(p string) {
+		}),
+		toggle("Pin", pinIcon, func(p string) bool { return d.Repos[p].Pinned }, func(p string) {
 			repo(p, func(r *RepoConfig) { r.Pinned = !r.Pinned })
-		}},
+		}),
 	})
 
 	search := group("Scanning", container.NewVBox(
@@ -156,15 +175,31 @@ func group(title string, content fyne.CanvasObject) fyne.CanvasObject {
 	)
 }
 
-// column is a toggle in a pathTable: its icon is lit while on.
+// column is an icon per path in a pathTable, sorted by rank. A nil tap
+// makes it read-only.
 type column struct {
 	header string
-	icon   fyne.Resource
-	on     func(path string) bool
-	flip   func(path string)
+	icon   func(path string) fyne.Resource
+	rank   func(path string) int
+	tap    func(path string)
 }
 
-// pathTable lists paths with a toggle per column, and refresh rereads them.
+// toggle is a column whose icon is lit while on, listing those first.
+func toggle(header string, res fyne.Resource, on func(path string) bool, flip func(path string)) column {
+	return column{header, func(p string) fyne.Resource {
+		if on(p) {
+			return res
+		}
+		return theme.NewDisabledResource(res)
+	}, func(p string) int {
+		if on(p) {
+			return 0
+		}
+		return 1
+	}, flip}
+}
+
+// pathTable lists paths with an icon per column, and refresh rereads them.
 // Clicking a header sorts by that column.
 func pathTable(rows func() []string, cols []column) (fyne.CanvasObject, func()) {
 	headers := []string{"Path"}
@@ -176,8 +211,9 @@ func pathTable(rows func() []string, cols []column) (fyne.CanvasObject, func()) 
 	sortRows := func() {
 		slices.SortFunc(paths, func(a, b string) int {
 			c := 0
-			if on := cols[max(sortCol-1, 0)].on; sortCol > 0 && on(a) != on(b) {
-				c = map[bool]int{true: -1, false: 1}[on(a)]
+			if sortCol > 0 {
+				rank := cols[sortCol-1].rank
+				c = rank(a) - rank(b)
 			}
 			if c == 0 {
 				c = strings.Compare(a, b)
@@ -217,13 +253,13 @@ func pathTable(rows func() []string, cols []column) (fyne.CanvasObject, func()) 
 			l.Hide()
 			b.Show()
 			c := cols[id.Col-1]
-			if c.on(path) {
-				b.SetIcon(c.icon)
-			} else {
-				b.SetIcon(theme.NewDisabledResource(c.icon))
+			b.SetIcon(c.icon(path))
+			b.OnTapped = nil
+			if c.tap == nil {
+				return
 			}
 			b.OnTapped = func() {
-				c.flip(path)
+				c.tap(path)
 				// Rows stay put under the pointer, unless one went
 				if len(rows()) != len(paths) {
 					refresh()
@@ -291,11 +327,11 @@ func sunken(content fyne.CanvasObject) fyne.CanvasObject {
 	return container.NewStack(bg, container.NewPadded(content))
 }
 
-// numberSlider sets *v from 1 to 10.
-func numberSlider(v *int) fyne.CanvasObject {
+// numberSlider sets *v from 1 to top.
+func numberSlider(v *int, top int) fyne.CanvasObject {
 	label := widget.NewLabel(strconv.Itoa(*v))
-	s := widget.NewSlider(1, 10)
-	s.Value = float64(min(max(*v, 1), 10))
+	s := widget.NewSlider(1, float64(top))
+	s.Value = float64(min(max(*v, 1), top))
 	s.OnChanged = func(f float64) {
 		*v = int(f)
 		label.SetText(strconv.Itoa(*v))
