@@ -26,7 +26,7 @@ override it.
 | `roots`          | `{"~": {"include": true}}`  | Directories to search for repositories, see below      |
 | `repos`          | `{}`                        | Settings for single repositories, see below            |
 | `depth`          | `5`                         | How many levels below a root a repository may be       |
-| `max`            | `5`                         | How many repositories the menu lists, pins aside       |
+| `max`            | `5`                         | How many repositories the menu lists, more if pinned   |
 | `scanInterval`   | `"5m"`                      | How often to search the roots                          |
 | `remoteInterval` | `"5m"`                      | How often to query the remotes set to `checkRemote`    |
 
