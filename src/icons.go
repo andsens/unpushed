@@ -33,9 +33,27 @@ func (l Look) Color() color.NRGBA {
 	return green
 }
 
-// Union is the look of several repos together, for the tray icon.
-func (l Look) Union(o Look) Look {
-	return Look{Up: l.Up || o.Up, Down: l.Down || o.Down, Failed: l.Failed || o.Failed}
+// Worst is the more severe of two looks, for the tray icon: a failure, then
+// diverged, then commits to push, then commits to pull.
+func (l Look) Worst(o Look) Look {
+	if o.severity() > l.severity() {
+		return o
+	}
+	return l
+}
+
+func (l Look) severity() int {
+	switch {
+	case l.Failed:
+		return 4
+	case l.Up && l.Down:
+		return 3
+	case l.Up:
+		return 2
+	case l.Down:
+		return 1
+	}
+	return 0
 }
 
 // svg is the icon for l in the colour c, on a 64x64 canvas.

@@ -252,7 +252,7 @@ func (t *tray) render() {
 	for r := range maps.Values(t.repos) {
 		if r.HasRemote {
 			all = append(all, *r)
-			tray = tray.Union(t.look(*r))
+			tray = tray.Worst(t.look(*r))
 		}
 	}
 	t.shown = MenuRepos(all, t.cfg.Max, func(path string) bool { return t.cfg.Repos[path].Pinned },

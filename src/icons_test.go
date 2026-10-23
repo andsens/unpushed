@@ -25,6 +25,17 @@ func renderPNG(res fyne.Resource, size float32) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+func TestWorst(t *testing.T) {
+	order := []Look{{}, {Down: true}, {Up: true}, {Up: true, Down: true}, {Failed: true}}
+	for i, l := range order {
+		for j, o := range order {
+			if got := l.Worst(o); got != order[max(i, j)] {
+				t.Errorf("%+v worst of %+v is %+v", l, o, got)
+			}
+		}
+	}
+}
+
 func TestLook(t *testing.T) {
 	test.NewTempApp(t)
 	for _, c := range []struct {
@@ -36,7 +47,9 @@ func TestLook(t *testing.T) {
 		{Look{Down: true}, "yellow"},
 		{Look{Up: true, Down: true}, "red"},
 		{Look{Failed: true}, "red"},
-		{Look{Up: true}.Union(Look{Down: true}), "red"},
+		// One repo ahead and another behind isn't a divergence
+		{Look{Down: true}.Worst(Look{Up: true}), "yellow"},
+		{Look{Up: true}.Worst(Look{Failed: true}), "red"},
 	} {
 		got := map[any]string{green: "green", yellow: "yellow", red: "red"}[c.look.Color()]
 		if got != c.want {

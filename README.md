@@ -8,10 +8,12 @@
   A tray icon that shows which of your git repositories have commits to push or pull.
 </p>
 
-The tray icon sums up every repository it finds. Its menu lists the ones you
-pinned, then the ones with commits to push or pull, then the ones you worked
-in most recently, each with its own icon and the number of commits ahead and
-behind. Only the branch checked out in a repository's main worktree counts.
+The tray icon shows the worst state among the repositories it finds: a failed
+sync, then diverged, then commits to push, then commits to pull. Its menu
+lists the ones you pinned, then the ones with commits to push or pull, then
+the ones you worked in most recently, each with its own icon and the number
+of commits ahead and behind. Only the branch checked out in a repository's
+main worktree counts.
 
 | Icon | Meaning |
 | :-: | --- |
