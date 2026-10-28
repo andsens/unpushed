@@ -95,7 +95,7 @@ func main() {
 	}
 	// Set before Run, render's updates go through fyne.Do once it runs
 	desk.SetSystemTrayIcon(icon(Look{}))
-	desk.SetSystemTrayMenu(fyne.NewMenu("unpushed", fyne.NewMenuItem("Settings…", t.showSettings)))
+	desk.SetSystemTrayMenu(fyne.NewMenu("unpushed", t.footer()...))
 	// Debounced, a commit or fetch touches several files
 	t.refresh = time.AfterFunc(time.Hour, t.refreshDirty)
 	t.refresh.Stop()
@@ -284,13 +284,20 @@ func (t *tray) render() {
 	if len(items) == 0 {
 		items = append(items, &fyne.MenuItem{Label: "No repositories", Disabled: true})
 	}
-	// fyne adds Quit
-	items = append(items, fyne.NewMenuItemSeparator(), fyne.NewMenuItem("Settings…", t.showSettings))
+	items = append(append(items, fyne.NewMenuItemSeparator()), t.footer()...)
 	menu := fyne.NewMenu("unpushed", items...)
 	fyne.Do(func() {
 		t.desk.SetSystemTrayIcon(icon(tray))
 		t.desk.SetSystemTrayMenu(menu)
 	})
+}
+
+// footer is the bottom of the tray menu. fyne's own Quit is appended after
+// it draws the menu, so it never shows.
+func (t *tray) footer() []*fyne.MenuItem {
+	quit := fyne.NewMenuItem("Quit", t.app.Quit)
+	quit.IsQuit = true
+	return []*fyne.MenuItem{fyne.NewMenuItem("Settings…", t.showSettings), quit}
 }
 
 // look adds a failed sync to the repo's look. Called with mu held.
