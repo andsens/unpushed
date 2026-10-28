@@ -29,7 +29,9 @@ Repositories without a remote are left out.
 
 Clicking a yellow repository fetches, then pushes the branch or fast-forwards
 it. Clicking a red one opens a terminal in the repository, so you can rebase or
-merge yourself.
+merge yourself. "Push all" and "Pull all" do the same for every repository
+with commits to push or to pull, those the menu has no room for included, and
+leave the red ones alone.
 
 unpushed never fetches on its own, so a down arrow appears once you have
 fetched. For repositories you mark with the refresh icon in the settings, it

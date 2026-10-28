@@ -95,7 +95,7 @@ func main() {
 	}
 	// Set before Run, render's updates go through fyne.Do once it runs
 	desk.SetSystemTrayIcon(icon(Look{}))
-	desk.SetSystemTrayMenu(fyne.NewMenu("unpushed", t.footer()...))
+	desk.SetSystemTrayMenu(fyne.NewMenu("unpushed", t.footer(0, 0)...))
 	// Debounced, a commit or fetch touches several files
 	t.refresh = time.AfterFunc(time.Hour, t.refreshDirty)
 	t.refresh.Stop()
@@ -256,10 +256,17 @@ func (t *tray) refreshDirty() {
 func (t *tray) render() {
 	var all []Repo
 	tray := Look{}
+	push, pull := 0, 0
 	for r := range maps.Values(t.repos) {
 		if r.HasRemote {
 			all = append(all, *r)
 			tray = tray.Worst(t.look(*r))
+			switch t.state(*r) {
+			case Ahead:
+				push++
+			case Behind:
+				pull++
+			}
 		}
 	}
 	t.shown = MenuRepos(all, t.cfg.Max, func(path string) bool { return t.cfg.Repos[path].Pinned },
@@ -284,7 +291,7 @@ func (t *tray) render() {
 	if len(items) == 0 {
 		items = append(items, &fyne.MenuItem{Label: "No repositories", Disabled: true})
 	}
-	items = append(append(items, fyne.NewMenuItemSeparator()), t.footer()...)
+	items = append(append(items, fyne.NewMenuItemSeparator()), t.footer(push, pull)...)
 	menu := fyne.NewMenu("unpushed", items...)
 	fyne.Do(func() {
 		t.desk.SetSystemTrayIcon(icon(tray))
@@ -292,12 +299,23 @@ func (t *tray) render() {
 	})
 }
 
-// footer is the bottom of the tray menu. fyne's own Quit is appended after
-// it draws the menu, so it never shows.
-func (t *tray) footer() []*fyne.MenuItem {
+// footer is the bottom of the tray menu, with the number of repos to push
+// and to pull. fyne's own Quit is appended after it draws the menu, so it
+// never shows.
+func (t *tray) footer(push, pull int) []*fyne.MenuItem {
+	all := func(label string, n int, state State) *fyne.MenuItem {
+		if n > 0 {
+			label += fmt.Sprintf(" (%d)", n)
+		}
+		item := fyne.NewMenuItem(label, func() { go t.syncAll(state) })
+		item.Disabled = n == 0
+		return item
+	}
 	quit := fyne.NewMenuItem("Quit", t.app.Quit)
 	quit.IsQuit = true
-	return []*fyne.MenuItem{fyne.NewMenuItem("Settings…", t.showSettings), quit}
+	return []*fyne.MenuItem{
+		all("Push all", push, Ahead), all("Pull all", pull, Behind), fyne.NewMenuItem("Settings…", t.showSettings), quit,
+	}
 }
 
 // look adds a failed sync to the repo's look. Called with mu held.
@@ -341,17 +359,7 @@ func (t *tray) click(i int) {
 			go cmd.Wait()
 		}
 	default:
-		t.work.Lock()
-		ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
-		err := r.Sync(ctx)
-		cancel()
-		t.work.Unlock()
-		if err != nil {
-			slog.Error(err.Error())
-			t.mu.Lock()
-			t.failed[r.Path] = true
-			t.mu.Unlock()
-		}
+		t.sync(r)
 	}
 	t.mu.Lock()
 	t.dirty[r.Path] = true
@@ -379,4 +387,39 @@ func (t *tray) applyConfig(cfg Config) error {
 	default:
 	}
 	return nil
+}
+
+// syncAll syncs every repo in state, Ahead or Behind. Diverged and failed
+// repos are left for the user.
+func (t *tray) syncAll(state State) {
+	t.mu.Lock()
+	var todo []Repo
+	for _, r := range t.repos {
+		if r.HasRemote && t.state(*r) == state {
+			todo = append(todo, *r)
+		}
+	}
+	t.mu.Unlock()
+	for _, r := range todo {
+		t.sync(r)
+		t.mu.Lock()
+		t.dirty[r.Path] = true
+		t.mu.Unlock()
+	}
+	t.refreshDirty()
+}
+
+// sync pushes or fast-forwards r and marks it failed when that fails.
+func (t *tray) sync(r Repo) {
+	t.work.Lock()
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	err := r.Sync(ctx)
+	cancel()
+	t.work.Unlock()
+	if err != nil {
+		slog.Error(err.Error())
+		t.mu.Lock()
+		t.failed[r.Path] = true
+		t.mu.Unlock()
+	}
 }
