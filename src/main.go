@@ -106,18 +106,32 @@ func main() {
 func (t *tray) loop() {
 	t.scan()
 	t.lsRemotes()
-	t.mu.Lock()
-	scan, remote := time.NewTimer(t.cfg.ScanInterval.Duration), time.NewTimer(t.cfg.RemoteInterval.Duration)
-	t.mu.Unlock()
+	// Read on every reset, the config may have changed
+	intervals := func() (scan, remote time.Duration) {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		return t.cfg.ScanInterval.Duration, t.cfg.RemoteInterval.Duration
+	}
+	scanEvery, remoteEvery := intervals()
+	scan, remote := time.NewTimer(scanEvery), time.NewTimer(remoteEvery)
 	for {
+		// Each timer rearms only itself, a shorter remote interval would
+		// otherwise keep pushing the scan back
 		select {
 		case <-scan.C:
 			t.scan()
+			scanEvery, _ = intervals()
+			scan.Reset(scanEvery)
 		case <-remote.C:
 			t.lsRemotes()
+			_, remoteEvery = intervals()
+			remote.Reset(remoteEvery)
 		case <-t.reconfig:
 			t.scan()
 			t.lsRemotes()
+			scanEvery, remoteEvery = intervals()
+			scan.Reset(scanEvery)
+			remote.Reset(remoteEvery)
 		case ev := <-t.watcher.Events:
 			sep := string(filepath.Separator)
 			if ev.Has(fsnotify.Create) && strings.Contains(ev.Name, sep+".git"+sep+"refs"+sep) {
@@ -131,16 +145,9 @@ func (t *tray) loop() {
 				t.mu.Unlock()
 				t.refresh.Reset(refreshDelay)
 			}
-			continue
 		case err := <-t.watcher.Errors:
 			slog.Warn(fmt.Sprintf("Watcher error: %s", err))
-			continue
 		}
-		// The intervals may have changed with the config
-		t.mu.Lock()
-		scan.Reset(t.cfg.ScanInterval.Duration)
-		remote.Reset(t.cfg.RemoteInterval.Duration)
-		t.mu.Unlock()
 	}
 }
 
