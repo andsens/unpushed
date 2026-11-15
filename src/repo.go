@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -64,7 +65,74 @@ func FindRepos(roots, pruned []string, depth int, timeout time.Duration) []Repo 
 		}
 		found = append(found, repos...)
 	}
+	disambiguate(found)
 	return found
+}
+
+// disambiguate prefixes names that several repos share with the nearest
+// parent directory that tells them apart, eliding the levels in between.
+// When no single parent does, the shortest distinguishing run of parents is
+// used.
+func disambiguate(repos []Repo) {
+	groups := map[string][]int{}
+	for i, r := range repos {
+		groups[r.Name] = append(groups[r.Name], i)
+	}
+	sep := string(filepath.Separator)
+	for name, group := range groups {
+		if len(group) < 2 {
+			continue
+		}
+		// The parents of each repo above its name, nearest first
+		parents := make([][]string, len(group))
+		for g, i := range group {
+			above := strings.TrimSuffix(repos[i].Path, sep+name)
+			for _, part := range strings.Split(above, sep) {
+				if part != "" {
+					parents[g] = append([]string{part}, parents[g]...)
+				}
+			}
+		}
+		at := func(g, level int) string {
+			if level < len(parents[g]) {
+				return parents[g][level]
+			}
+			return ""
+		}
+		for g, i := range group {
+			repos[i].Name = repos[i].Path
+		single:
+			for level := range parents[g] {
+				for o := range group {
+					if o != g && at(o, level) == parents[g][level] {
+						continue single
+					}
+				}
+				if level == 0 {
+					repos[i].Name = parents[g][0] + sep + name
+				} else {
+					repos[i].Name = parents[g][level] + sep + "…" + sep + name
+				}
+				break
+			}
+			if repos[i].Name != repos[i].Path {
+				continue
+			}
+		run:
+			for n := 2; n <= len(parents[g]); n++ {
+				for o := range group {
+					if o != g && slices.Equal(parents[g][:n], parents[o][:min(n, len(parents[o]))]) {
+						continue run
+					}
+				}
+				// Join wants the outermost first
+				run := slices.Clone(parents[g][:n])
+				slices.Reverse(run)
+				repos[i].Name = filepath.Join(append(run, name)...)
+				break
+			}
+		}
+	}
 }
 
 // MenuRepos sorts repos into pinned ones, then ones out of sync, then the

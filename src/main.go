@@ -172,6 +172,8 @@ func (t *tray) scan() {
 	repos := map[string]*Repo{}
 	for _, r := range listed {
 		if known, ok := t.repos[r.Path]; ok {
+			// Another repo by the same name can turn up or go away
+			known.Name = r.Name
 			repos[r.Path] = known
 		} else {
 			repos[r.Path] = &r

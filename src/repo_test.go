@@ -221,3 +221,38 @@ func TestOnlyCheckedOutBranch(t *testing.T) {
 		t.Fatalf("Detached HEAD gave %+v", r.Branch)
 	}
 }
+
+func TestDisambiguate(t *testing.T) {
+	sep := string(filepath.Separator)
+	p := func(parts ...string) string { return sep + filepath.Join(parts...) }
+	repos := []Repo{
+		{Path: p("w", "homelab", "docs"), Name: "docs"},
+		{Path: p("w", "nixos", "docs"), Name: "docs"},
+		{Path: p("w", "somethingelse", "homelab", "site"), Name: "site"},
+		{Path: p("w", "something", "homelab", "site"), Name: "site"},
+		{Path: p("a", "x", "notes"), Name: "notes"},
+		{Path: p("b", "x", "notes"), Name: "notes"},
+		{Path: p("a", "y", "notes"), Name: "notes"},
+		{Path: p("r1", "sub", "lib"), Name: filepath.Join("sub", "lib")},
+		{Path: p("r2", "sub", "lib"), Name: filepath.Join("sub", "lib")},
+		{Path: p("w", "unique"), Name: "unique"},
+	}
+	disambiguate(repos)
+	want := []string{
+		filepath.Join("homelab", "docs"),
+		filepath.Join("nixos", "docs"),
+		filepath.Join("somethingelse", "…", "site"),
+		filepath.Join("something", "…", "site"),
+		filepath.Join("a", "x", "notes"),
+		filepath.Join("b", "…", "notes"),
+		filepath.Join("y", "notes"),
+		filepath.Join("r1", "sub", "lib"),
+		filepath.Join("r2", "sub", "lib"),
+		"unique",
+	}
+	for i, r := range repos {
+		if r.Name != want[i] {
+			t.Errorf("%s named %q, want %q", r.Path, r.Name, want[i])
+		}
+	}
+}
